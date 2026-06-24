@@ -2415,6 +2415,9 @@ window.updateTuneProgress=function(pct,eta){
   setTimeout(()=>{
     const l=document.getElementById('loader');
     if(l){l.style.transition='opacity .4s';l.style.opacity='0';setTimeout(()=>l.style.display='none',400);}
+    const app=document.getElementById('app');
+    if(app) app.classList.remove('hidden');
+    if(typeof setupDnD === 'function') setupDnD();
   },400);
 })();
 </script>
