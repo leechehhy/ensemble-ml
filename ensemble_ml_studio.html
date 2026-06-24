@@ -2399,20 +2399,7 @@ window.updateTuneProgress=function(pct,eta){
   if(oe) oe.textContent=eta>0?`남은 시간 약 ${eta.toFixed(0)}초`:'거의 완료...';
 };
 
-(async()=>{
-  const bar=document.getElementById('loaderBar');
-  const sub=document.getElementById('loaderSub');
-  const steps=[[15,'Pyodide 로딩 중...'],[35,'과학 라이브러리 준비 중...'],[60,'머신러닝 엔진 초기화 중...'],[85,'분석 환경 구성 중...'],[100,'준비 완료!']];
-  let si=0;
-  const tick=setInterval(()=>{if(si<steps.length){const[p,t]=steps[si++];if(bar)bar.style.width=p+'%';if(sub)sub.textContent=t;}},700);
-  try{
-    pyodide=await loadPyodide();
-    await pyodide.loadPackage(['numpy','pandas','scikit-learn']);
-  }catch(e){console.error('Pyodide init error:',e);}
-  clearInterval(tick);
-  if(bar) bar.style.width='100%';
-  if(sub) sub.textContent='준비 완료!';
-  setTimeout(()=>{
-    const l=document.getElementById('loader');
-    if(l){l.style.transition='opacity .4s';l.style.opacity='0';setTimeout(()=>l.style.display='none',400);}
-    const app=document.getElementById('ap
+initPyodide();
+</script>
+</body>
+</html>
