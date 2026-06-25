@@ -1,6 +1,6 @@
-import os, json, pickle, uuid, threading, time, io
+import os, pickle, uuid, threading, io
 import tempfile
-from flask import Flask, request, jsonify, send_from_directory, session, Response
+from flask import Flask, request, jsonify, send_from_directory, Response
 
 import pandas as pd
 import numpy as np
@@ -18,6 +18,13 @@ app.secret_key = os.environ.get('SECRET_KEY', 'ensemble-ml-2024-secret')
 
 SESSIONS_DIR = tempfile.mkdtemp()
 JOBS = {}  # job_id -> {'progress': int, 'done': bool, 'result': dict, 'error': str}
+
+def _cleanup_jobs():
+    """완료된 job이 200개 초과 시 오래된 것 제거."""
+    done_ids = [k for k, v in JOBS.items() if v.get('done')]
+    if len(done_ids) > 200:
+        for k in done_ids[:100]:
+            JOBS.pop(k, None)
 
 # ─────────────────────────────────────────────
 # Optional imports
@@ -181,27 +188,47 @@ def index():
 
 @app.route('/api/load_data', methods=['POST'])
 def api_load_data():
-    body = request.get_json()
+    body = request.get_json(silent=True)
+    if not body:
+        return jsonify({'error': '요청 본문이 없습니다'}), 400
     sid = body.get('session_id', str(uuid.uuid4()))
-    csv_str = body['csv']
-    target_col = body['target']
+    csv_str = body.get('csv', '')
+    target_col = body.get('target', '')
+    if not csv_str or not target_col:
+        return jsonify({'error': 'csv 또는 target 누락'}), 400
     selected_features = body.get('features', [])
     balance_strategy = body.get('balance', 'none')
     test_size = float(body.get('test_size', 0.2))
 
     try:
         df = pd.read_csv(io.StringIO(csv_str))
+        df.columns = [c.strip() for c in df.columns]  # 컬럼명 공백 제거
         feature_names = [c for c in (selected_features or df.columns.tolist()) if c != target_col and c in df.columns]
         df, prep_issues = _auto_preprocess(df, target_col, feature_names)
 
         encoders = {}
         for col in feature_names:
-            if col in df.columns and df[col].dtype == object:
+            if col not in df.columns:
+                continue
+            # float 변환 시도 → 실패하면 LabelEncoder 적용
+            try:
+                df[col].astype(float)
+            except (ValueError, TypeError):
                 enc = LabelEncoder()
-                df[col] = enc.fit_transform(df[col].astype(str))
+                df[col] = enc.fit_transform(df[col].fillna('missing').astype(str))
                 encoders[col] = enc
 
-        X = df[feature_names].fillna(0).values.astype(float)
+        # 최종 안전장치: 컬럼별로 float 변환 가능하게 강제 처리
+        X_safe = df[feature_names].copy()
+        for col in X_safe.columns:
+            try:
+                X_safe[col] = X_safe[col].astype(float)
+            except (ValueError, TypeError):
+                X_safe[col] = LabelEncoder().fit_transform(
+                    X_safe[col].fillna('missing').astype(str)
+                ).astype(float)
+
+        X = X_safe.fillna(0).values.astype(float)
         le = LabelEncoder()
         y = le.fit_transform(df[target_col].astype(str))
         is_binary = len(le.classes_) == 2
@@ -228,7 +255,9 @@ def api_load_data():
 
 @app.route('/api/evaluate_single', methods=['POST'])
 def api_evaluate_single():
-    body = request.get_json()
+    body = request.get_json(silent=True)
+    if not body:
+        return jsonify({'ok': False, 'err': '요청 본문 없음'}), 400
     sid = body.get('session_id')
     model_name = body['model']
     cv_folds = int(body.get('cv_folds', 5))
@@ -249,7 +278,7 @@ def api_evaluate_single():
             fit_p = {'sample_weight': _compute_sample_weight(y)}
         try:
             scores = cross_val_score(m, X, y, cv=cv, scoring='f1_weighted', error_score=0,
-                                     fit_params=fit_p if fit_p else None)
+                                     **({"fit_params": fit_p} if fit_p else {}))
         except TypeError:
             scores = cross_val_score(m, X, y, cv=cv, scoring='f1_weighted', error_score=0)
         return jsonify({'name': model_name, 'f1': float(scores.mean()), 'std': float(scores.std()), 'ok': True, 'cv_folds': cv_folds})
@@ -264,7 +293,9 @@ def api_evaluate_single():
 
 @app.route('/api/train_and_eval', methods=['POST'])
 def api_train_and_eval():
-    body = request.get_json()
+    body = request.get_json(silent=True)
+    if not body:
+        return jsonify({'error': '요청 본문 없음'}), 400
     sid = body.get('session_id')
     model_name = body['model']
     params = body.get('params', {})
@@ -311,7 +342,7 @@ def api_train_and_eval():
         if is_binary:
             res['per_class'] = {
                 str(le.classes_[i]): {
-                    'precision': float(precision_score(y_te, y_pred, pos_label=i, average='binary', zero_division=0)),
+                    'precision': float(precision_score(y_te, y_pred, pos_label=i, average='binary' , zero_division=0)),
                     'recall': float(recall_score(y_te, y_pred, pos_label=i, average='binary', zero_division=0)),
                     'f1': float(f1_score(y_te, y_pred, pos_label=i, average='binary', zero_division=0))
                 } for i in range(len(le.classes_))
@@ -340,12 +371,12 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
     is_binary = state['is_binary']
 
     _GRIDS = {
-        'Random Forest': {'n_estimators':[50,100,200,300],'max_depth':[5,8,12,18,None],'min_samples_leaf':[1,3,5,10],'max_leaf_nodes':[20,50,100,None],'max_features':[0.3,0.5,0.7,0.8],'criterion':['gini','entropy']},
-        'Gradient Boosting': {'n_estimators':[50,100,200],'max_depth':[3,4,5,7],'learning_rate':[0.03,0.05,0.1,0.2],'min_samples_leaf':[1,3,5,10],'max_leaf_nodes':[10,31,50,None]},
-        'Extra Trees': {'n_estimators':[50,100,200,300],'max_depth':[5,10,15,None],'min_samples_leaf':[1,3,5,10],'max_leaf_nodes':[20,50,100,None],'max_features':[0.3,0.5,0.7,0.8]},
+        'Random Forest': {'nv_estimators':[50,100,200,300],'max_depth':[5,8,12,18,None],'min_samples_leaf':[1,3,5,10],'max_leaf_nodes':[20,50,100,None],'max_features':[0.3,0.5,0.7,0.8],'criterion':['gini','entropy']},
+        'Gradient Boosting': {'nv_estimators':[50,100,200],'max_depth':[3,4,5,7],'learning_rate':[0.03,0.05,0.1,0.2],'min_samples_leaf':[1,3,5,10],'max_leaf_nodes':[10,31,50,None]},
+        'Extra Trees': {'nu_estimators':[50,100,200,300],'max_depth':[5,10,15,None],'min_samples_leaf':[1,3,5,10],'max_leaf_nodes':[20,50,100,None],'max_features':[0.3,0.5,0.7,0.8]},
         'AdaBoost': {'n_estimators':[50,100,200],'learning_rate':[0.5,1.0,1.5,2.0],'base_max_depth':[1,2,3]},
-        'XGBoost': {'n_estimators':[50,100,200],'max_depth':[3,4,5,6,8],'learning_rate':[0.03,0.05,0.1,0.2],'min_child_weight':[1,3,5,10],'max_leaves':[0,16,31,63]},
-        'HistGBM (LightGBM계열)': {'max_iter':[50,100,200],'max_depth':[3,5,7,None],'learning_rate':[0.03,0.05,0.1,0.2],'min_samples_leaf':[10,20,30,50],'max_leaf_nodes':[15,31,63,127]},
+        'XGBoost': {'nv_estimators':[50,100,200],'max_depth':[3,4,5,6,8],'learning_rate':[0.03,0.05,0.1,0.2],'min_child_weight':[1,3,5,10],'max_leaves':[0,16,31,63]},
+        'HistGBM (LightGBM계열)': {'max_iter':[50,100,200], 'max_depth':[3,5,7,None],'learning_rate':[0.03,0.05,0.1,0.2],'min_samples_leaf':[10,20,30,50],'max_leaf_nodes':[15,31,63,127]},
         'CatBoost': {'iterations':[100,200,300,500],'depth':[4,5,6,7,8],'learning_rate':[0.01,0.03,0.05,0.1,0.15],'l2_leaf_reg':[1,3,5,7,10]},
     }
 
@@ -378,6 +409,9 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
             JOBS[job_id]['progress'] = int((i + 1) / n_iter1 * 75)
 
         # Phase 2: anti-overfit refinement (75→95%)
+        if best_params is None:
+            JOBS[job_id] = {'progress': 0, 'done': True, 'result': None, 'error': '모든 파라미터 탐색 실패'}
+            return
         m_best = _make_model_balanced(model_name, dict(best_params), strat)
         if strat == 'balanced' and model_name in CW_UNSUPPORTED:
             m_best.fit(X, y, sample_weight=_compute_sample_weight(y))
@@ -436,11 +470,15 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
         JOBS[job_id] = {'progress': 100, 'done': True, 'result': result, 'error': None}
     except Exception as e:
         JOBS[job_id] = {'progress': 0, 'done': True, 'result': None, 'error': str(e)}
+    finally:
+        _cleanup_jobs()
 
 
 @app.route('/api/tune/start', methods=['POST'])
 def api_tune_start():
-    body = request.get_json()
+    body = request.get_json(silent=True)
+    if not body:
+        return jsonify({'error': '요청 본문 없음'}), 400
     sid = body.get('session_id')
     model_name = body['model']
     balance_strategy = body.get('balance', 'none')
@@ -465,7 +503,9 @@ def api_tune_status():
 
 @app.route('/api/predict', methods=['POST'])
 def api_predict():
-    body = request.get_json()
+    body = request.get_json(silent=True)
+    if not body:
+        return jsonify({'error': '요청 본문 없음'}), 400
     sid = body.get('session_id')
     csv_str = body['csv']
 
@@ -499,9 +539,11 @@ def api_predict():
 
         X_df = pd.DataFrame(index=df_p.index)
         for f in feature_names:
-            col = df_p[f]
+            col = df_p[f].copy()
             if col.dtype == object:
                 col = pd.to_numeric(col, errors='coerce')
+                if col.isna().all():  # 완전 문자열 컬럼 → 0으로 채움
+                    col = pd.Series(0, index=df_p.index)
             X_df[f] = col
         X_n = X_df.fillna(0).values.astype(float)
 
