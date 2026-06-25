@@ -118,7 +118,8 @@ def _make_model(name, params=None):
         if not _catboost_ok:
             raise ValueError('CatBoost 미지원')
         kw = {k: v for k, v in p.items() if k in ['iterations','depth','learning_rate','l2_leaf_reg']}
-        return _CBC(**kw, random_state=42, verbose=0, thread_count=-1)
+        kw.setdefault('iterations', 100)
+        return _CBC(**kw, random_state=42, verbose=0, thread_count=1, task_type='CPU')
     raise ValueError(f'Unknown model: {name}')
 
 CW_MODELS = {'Random Forest', 'Extra Trees', 'HistGBM (LightGBM계열)', 'CatBoost'}
@@ -342,7 +343,7 @@ def api_train_and_eval():
         if is_binary:
             res['per_class'] = {
                 str(le.classes_[i]): {
-                    'precision': float(precision_score(y_te, y_pred, pos_label=i, average='binary' , zero_division=0)),
+                    'precision': float(precision_score(y_te, y_pred, pos_label=i, average='binary', zero_division=0)),
                     'recall': float(recall_score(y_te, y_pred, pos_label=i, average='binary', zero_division=0)),
                     'f1': float(f1_score(y_te, y_pred, pos_label=i, average='binary', zero_division=0))
                 } for i in range(len(le.classes_))
@@ -371,13 +372,13 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
     is_binary = state['is_binary']
 
     _GRIDS = {
-        'Random Forest': {'nv_estimators':[50,100,200,300],'max_depth':[5,8,12,18,None],'min_samples_leaf':[1,3,5,10],'max_leaf_nodes':[20,50,100,None],'max_features':[0.3,0.5,0.7,0.8],'criterion':['gini','entropy']},
-        'Gradient Boosting': {'nv_estimators':[50,100,200],'max_depth':[3,4,5,7],'learning_rate':[0.03,0.05,0.1,0.2],'min_samples_leaf':[1,3,5,10],'max_leaf_nodes':[10,31,50,None]},
-        'Extra Trees': {'nu_estimators':[50,100,200,300],'max_depth':[5,10,15,None],'min_samples_leaf':[1,3,5,10],'max_leaf_nodes':[20,50,100,None],'max_features':[0.3,0.5,0.7,0.8]},
+        'Random Forest': {'n_estimators':[50,100,200,300],'max_depth':[5,8,12,18,None],'min_samples_leaf':[1,3,5,10],'max_leaf_nodes':[20,50,100,None],'max_features':[0.3,0.5,0.7,0.8],'criterion':['gini','entropy']},
+        'Gradient Boosting': {'n_estimators':[50,100,200],'max_depth':[3,4,5,7],'learning_rate':[0.03,0.05,0.1,0.2],'min_samples_leaf':[1,3,5,10],'max_leaf_nodes':[10,31,50,None]},
+        'Extra Trees': {'n_estimators':[50,100,200,300],'max_depth':[5,10,15,None],'min_samples_leaf':[1,3,5,10],'max_leaf_nodes':[20,50,100,None],'max_features':[0.3,0.5,0.7,0.8]},
         'AdaBoost': {'n_estimators':[50,100,200],'learning_rate':[0.5,1.0,1.5,2.0],'base_max_depth':[1,2,3]},
-        'XGBoost': {'nv_estimators':[50,100,200],'max_depth':[3,4,5,6,8],'learning_rate':[0.03,0.05,0.1,0.2],'min_child_weight':[1,3,5,10],'max_leaves':[0,16,31,63]},
-        'HistGBM (LightGBM계열)': {'max_iter':[50,100,200], 'max_depth':[3,5,7,None],'learning_rate':[0.03,0.05,0.1,0.2],'min_samples_leaf':[10,20,30,50],'max_leaf_nodes':[15,31,63,127]},
-        'CatBoost': {'iterations':[100,200,300,500],'depth':[4,5,6,7,8],'learning_rate':[0.01,0.03,0.05,0.1,0.15],'l2_leaf_reg':[1,3,5,7,10]},
+        'XGBoost': {'n_estimators':[50,100,200],'max_depth':[3,4,5,6,8],'learning_rate':[0.03,0.05,0.1,0.2],'min_child_weight':[1,3,5,10],'max_leaves':[0,16,31,63]},
+        'HistGBM (LightGBM계열)': {'max_iter':[50,100,200],'max_depth':[3,5,7,None],'learning_rate':[0.03,0.05,0.1,0.2],'min_samples_leaf':[10,20,30,50],'max_leaf_nodes':[15,31,63,127]},
+        'CatBoost': {'iterations':[50,100,150],'depth':[4,5,6],'learning_rate':[0.03,0.05,0.1,0.15],'l2_leaf_reg':[1,3,5]},
     }
 
     grid = _GRIDS.get(model_name)
