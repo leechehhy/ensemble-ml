@@ -1733,9 +1733,7 @@ async function runPredict(){
     const _ppr=await fetch('/api/predict',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({csv:predCsvData,session_id:SESSION_ID})});
     if(!_ppr.ok)throw new Error(await _ppr.text());
-    const _ppj=await _ppr.json();
-    if(_ppj.error)throw new Error(_ppj.error);
-    const csvResult=_ppj.csv;
+    const csvResult =await _ppr.text();
     const lines=csvResult.trim().split('\n');
     // Parse CSV properly
     function parseCsvLine(line){
