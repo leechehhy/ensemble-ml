@@ -20,15 +20,15 @@ SESSIONS_DIR = tempfile.mkdtemp()
 JOBS = {}  # job_id -> {'progress': int, 'done': bool, 'result': dict, 'error': str}
 
 def _cleanup_jobs():
-    """ìë£ë jobì´ 200ê° ì´ê³¼ ì ì¤ëë ê² ì ê±°."""
+    """완료된 job이 200개 초과 시 오래된 것 제거."""
     done_ids = [k for k, v in JOBS.items() if v.get('done')]
     if len(done_ids) > 200:
         for k in done_ids[:100]:
             JOBS.pop(k, None)
 
-# âââââââââââââââââââââââââââââââââââââââââââââ
+# ─────────────────────────────────────────────
 # Optional imports
-# âââââââââââââââââââââââââââââââââââââââââââââ
+# ─────────────────────────────────────────────
 try:
     from xgboost import XGBClassifier as _XGB
     _xgb_ok = True
@@ -41,9 +41,9 @@ try:
 except:
     _catboost_ok = False
 
-# âââââââââââââââââââââââââââââââââââââââââââââ
+# ─────────────────────────────────────────────
 # Session state helpers
-# âââââââââââââââââââââââââââââââââââââââââââââ
+# ─────────────────────────────────────────────
 def save_state(sid, state):
     path = os.path.join(SESSIONS_DIR, f'{sid}.pkl')
     with open(path, 'wb') as f:
@@ -56,9 +56,9 @@ def load_state(sid):
             return pickle.load(f)
     return None
 
-# âââââââââââââââââââââââââââââââââââââââââââââ
+# ─────────────────────────────────────────────
 # ML helpers
-# âââââââââââââââââââââââââââââââââââââââââââââ
+# ─────────────────────────────────────────────
 def _auto_preprocess(df, target_col, feature_cols):
     issues = []
     df = df.copy()
@@ -71,22 +71,22 @@ def _auto_preprocess(df, target_col, feature_cols):
                 bad = int(df[col].notna().sum() - converted.notna().sum())
                 df[col] = converted
                 if bad > 0:
-                    issues.append(f'[{col}] {bad}ê° ë¹ì«ì ê° â NaN ë³í')
+                    issues.append(f'[{col}] {bad}개 비숫자 값 → NaN 변환')
         if pd.api.types.is_numeric_dtype(df[col]):
             inf_cnt = int(np.isinf(df[col].replace([None], np.nan).astype(float)).sum()) if df[col].notna().any() else 0
             if inf_cnt > 0:
                 df[col] = df[col].replace([np.inf, -np.inf], np.nan)
-                issues.append(f'[{col}] {inf_cnt}ê° ë¬´íë â NaN ë³í')
+                issues.append(f'[{col}] {inf_cnt}개 무한대 → NaN 변환')
         na_cnt = int(df[col].isna().sum())
         if na_cnt > 0:
             if pd.api.types.is_numeric_dtype(df[col]):
                 fv = df[col].median()
                 df[col] = df[col].fillna(fv)
-                issues.append(f'[{col}] {na_cnt}ê° ê²°ì¸¡ê° â ì¤ìê°({fv:.3g}) ë³´ì¶©')
+                issues.append(f'[{col}] {na_cnt}개 결측값 → 중앙값({fv:.3g}) 보충')
             else:
                 fv = df[col].mode().iloc[0] if len(df[col].dropna()) > 0 else 'unknown'
                 df[col] = df[col].fillna(fv)
-                issues.append(f'[{col}] {na_cnt}ê° ê²°ì¸¡ê° â ìµë¹ê°("{fv}") ë³´ì¶©')
+                issues.append(f'[{col}] {na_cnt}개 결측값 → 최빈값("{fv}") 보충')
     return df, issues
 
 def _make_model(name, params=None):
@@ -108,21 +108,21 @@ def _make_model(name, params=None):
         return AdaBoostClassifier(estimator=base, **kw, random_state=42)
     elif name == 'XGBoost':
         if not _xgb_ok:
-            raise ValueError('XGBoost ë¯¸ì§ì')
+            raise ValueError('XGBoost 미지원')
         kw = {k: v for k, v in p.items() if k in ['n_estimators','max_depth','learning_rate','min_child_weight','max_leaves']}
         return _XGB(**kw, random_state=42, verbosity=0, eval_metric='logloss', n_jobs=-1)
-    elif name == 'HistGBM (LightGBMê³ì´)':
+    elif name == 'HistGBM (LightGBM계열)':
         kw = {k: v for k, v in p.items() if k in ['max_iter','max_depth','learning_rate','min_samples_leaf','max_leaf_nodes']}
         return HistGradientBoostingClassifier(**kw, random_state=42)
     elif name == 'CatBoost':
         if not _catboost_ok:
-            raise ValueError('CatBoost ë¯¸ì§ì')
+            raise ValueError('CatBoost 미지원')
         kw = {k: v for k, v in p.items() if k in ['iterations','depth','learning_rate','l2_leaf_reg']}
         kw.setdefault('iterations', 100)
         return _CBC(**kw, random_state=42, verbose=0, thread_count=1, task_type='CPU')
-    raise ValueError (f'Unknown model: {name}')
+    raise ValueError(f'Unknown model: {name}')
 
-CW_MODELS = {'Random Forest', 'Extra Trees', 'HistGBM (LightGBMê³ì´)', 'CatBoost'}
+CW_MODELS = {'Random Forest', 'Extra Trees', 'HistGBM (LightGBM계열)', 'CatBoost'}
 CW_UNSUPPORTED = {'Gradient Boosting', 'AdaBoost', 'XGBoost'}
 
 def _compute_sample_weight(y):
@@ -180,9 +180,9 @@ def _fit_model(model, name, X_tr, y_tr, strategy):
         model.fit(X_tr, y_tr)
     return model
 
-# âââââââââââââââââââââââââââââââââââââââââââââ
+# ─────────────────────────────────────────────
 # Routes
-# âââââââââââââââââââââââââââââââââââââââââââââ
+# ─────────────────────────────────────────────
 @app.route('/')
 def index():
     return send_from_directory('templates', 'index.html')
@@ -191,19 +191,19 @@ def index():
 def api_load_data():
     body = request.get_json(silent=True)
     if not body:
-        return jsonify({'error': 'ìì²­ ë³¸ë¬¸ì´ ììµëë¤'}), 400
+        return jsonify({'error': '요청 본문이 없습니다'}), 400
     sid = body.get('session_id', str(uuid.uuid4()))
     csv_str = body.get('csv', '')
     target_col = body.get('target', '')
     if not csv_str or not target_col:
-        return jsonify({'error': 'csv ëë target ëë½'}), 400
+        return jsonify({'error': 'csv 또는 target 누락'}), 400
     selected_features = body.get('features', [])
     balance_strategy = body.get('balance', 'none')
     test_size = float(body.get('test_size', 0.2))
 
     try:
         df = pd.read_csv(io.StringIO(csv_str))
-        df.columns = [c.strip() for c in df.columns]  # ì»¬ë¼ëª ê³µë°± ì ê±°
+        df.columns = [c.strip() for c in df.columns]  # 컬럼명 공백 제거
         feature_names = [c for c in (selected_features or df.columns.tolist()) if c != target_col and c in df.columns]
         df, prep_issues = _auto_preprocess(df, target_col, feature_names)
 
@@ -211,7 +211,7 @@ def api_load_data():
         for col in feature_names:
             if col not in df.columns:
                 continue
-            # float ë³í ìë â ì¤í¨íë©´ LabelEncoder ì ì©
+            # float 변환 시도 → 실패하면 LabelEncoder 적용
             try:
                 df[col].astype(float)
             except (ValueError, TypeError):
@@ -219,7 +219,7 @@ def api_load_data():
                 df[col] = enc.fit_transform(df[col].fillna('missing').astype(str))
                 encoders[col] = enc
 
-        # ìµì¢ ìì ì¥ì¹: ì»¬ë¼ë³ë¡ float ë³í ê°ë¥íê² ê°ì  ì²ë¦¬
+        # 최종 안전장치: 컬럼별로 float 변환 가능하게 강제 처리
         X_safe = df[feature_names].copy()
         for col in X_safe.columns:
             try:
@@ -258,14 +258,14 @@ def api_load_data():
 def api_evaluate_single():
     body = request.get_json(silent=True)
     if not body:
-        return jsonify({'ok': False, 'err': 'ìì²­ ë³¸ë¬¸ ìì'}), 400
+        return jsonify({'ok': False, 'err': '요청 본문 없음'}), 400
     sid = body.get('session_id')
     model_name = body['model']
     cv_folds = int(body.get('cv_folds', 5))
 
     state = load_state(sid)
     if not state:
-        return jsonify({'ok': False, 'err': 'ì¸ì ìì'}), 400
+        return jsonify({'ok': False, 'err': '세션 없음'}), 400
 
     X, y = state['X'], state['y']
     balance_strategy = state['balance_strategy']
@@ -296,7 +296,7 @@ def api_evaluate_single():
 def api_train_and_eval():
     body = request.get_json(silent=True)
     if not body:
-        return jsonify({'error': 'ìì²­ ë³¸ë¬¸ ìì'}), 400
+        return jsonify({'error': '요청 본문 없음'}), 400
     sid = body.get('session_id')
     model_name = body['model']
     params = body.get('params', {})
@@ -304,7 +304,7 @@ def api_train_and_eval():
 
     state = load_state(sid)
     if not state:
-        return jsonify({'error': 'ì¸ì ìì'}), 400
+        return jsonify({'error': '세션 없음'}), 400
 
     X, y = state['X'], state['y']
     le = state['le']
@@ -365,7 +365,7 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
     """Background tuning job."""
     state = load_state(sid)
     if not state:
-        JOBS[job_id] = {'progress': 0, 'done': True, 'error': 'ì¸ì ìì', 'result': None}
+        JOBS[job_id] = {'progress': 0, 'done': True, 'error': '세션 없음', 'result': None}
         return
 
     X, y = state['X'], state['y']
@@ -377,13 +377,13 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
         'Extra Trees': {'n_estimators':[50,100,200,300],'max_depth':[5,10,15,None],'min_samples_leaf':[1,3,5,10],'max_leaf_nodes':[20,50,100,None],'max_features':[0.3,0.5,0.7,0.8]},
         'AdaBoost': {'n_estimators':[50,100,200],'learning_rate':[0.5,1.0,1.5,2.0],'base_max_depth':[1,2,3]},
         'XGBoost': {'n_estimators':[50,100,200],'max_depth':[3,4,5,6,8],'learning_rate':[0.03,0.05,0.1,0.2],'min_child_weight':[1,3,5,10],'max_leaves':[0,16,31,63]},
-        'HistGBM (LightGBMê³ì´)': {'max_iter':[50,100,200],'max_depth':[3,5,7,None],'learning_rate':[0.03,0.05,0.1,0.2],'min_samples_leaf':[10,20,30,50],'max_leaf_nodes':[15,31,63,127]},
+        'HistGBM (LightGBM계열)': {'max_iter':[50,100,200],'max_depth':[3,5,7,None],'learning_rate':[0.03,0.05,0.1,0.2],'min_samples_leaf':[10,20,30,50],'max_leaf_nodes':[15,31,63,127]},
         'CatBoost': {'iterations':[50,100,150],'depth':[4,5,6],'learning_rate':[0.03,0.05,0.1,0.15],'l2_leaf_reg':[1,3,5]},
     }
 
     grid = _GRIDS.get(model_name)
     if not grid:
-        JOBS[job_id] = {'progress': 0, 'done': True, 'error': f'{model_name}: ì§ìíì§ ìë ëª¨ë¸', 'result': None}
+        JOBS[job_id] = {'progress': 0, 'done': True, 'error': f'{model_name}: 지원하지 않는 모델', 'result': None}
         return
 
     try:
@@ -393,7 +393,7 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
         param_list = list(ParameterSampler(grid, n_iter=n_iter1, random_state=42))
         best_cv = -1; best_params = None; best_estimator = None
 
-        # Phase 1: 10 trials (0â75%)
+        # Phase 1: 10 trials (0→75%)
         for i, params in enumerate(param_list):
             m = _make_model_balanced(model_name, dict(params), strat)
             try:
@@ -409,9 +409,9 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
                 best_cv = s; best_params = dict(params)
             JOBS[job_id]['progress'] = int((i + 1) / n_iter1 * 75)
 
-        # Phase 2: anti-overfit refinement (75â95%)
+        # Phase 2: anti-overfit refinement (75→95%)
         if best_params is None:
-            JOBS[job_id] = {'progress': 0, 'done': True, 'result': None, 'error': 'ëª¨ë  íë¼ë¯¸í° íì ì¤í¨'}
+            JOBS[job_id] = {'progress': 0, 'done': True, 'result': None, 'error': '모든 파라미터 탐색 실패'}
             return
         m_best = _make_model_balanced(model_name, dict(best_params), strat)
         if strat == 'balanced' and model_name in CW_UNSUPPORTED:
@@ -427,7 +427,7 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
                 tight['max_depth'] = [d for d in tight['max_depth'] if d is None or d <= 7] or [5]
             if 'min_samples_leaf' in tight:
                 tight['min_samples_leaf'] = [v for v in tight['min_samples_leaf'] if v >= 3] or [5]
-            tight_list = list(ParameterSampler(tight, n_iter=n_iter2, random_state=42))
+            tight_list = list(ParameterSampler(tight, n_iter=n_iter2, random_state=0))
             for j, params2 in enumerate(tight_list):
                 m2 = _make_model_balanced(model_name, dict(params2), strat)
                 try:
@@ -479,7 +479,7 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
 def api_tune_start():
     body = request.get_json(silent=True)
     if not body:
-        return jsonify({'error': 'ìì²­ ë³¸ë¬¸ ìì'}), 400
+        return jsonify({'error': '요청 본문 없음'}), 400
     sid = body.get('session_id')
     model_name = body['model']
     balance_strategy = body.get('balance', 'none')
@@ -498,7 +498,7 @@ def api_tune_status():
     job_id = request.args.get('job_id')
     job = JOBS.get(job_id)
     if not job:
-        return jsonify({'error': 'ìì ìì'}), 404
+        return jsonify({'error': '작업 없음'}), 404
     return jsonify(job)
 
 
@@ -506,18 +506,17 @@ def api_tune_status():
 def api_predict():
     body = request.get_json(silent=True)
     if not body:
-        return jsonify({'error': 'ìì²­ ë³¸ë¬¸ ìì'}), 400
+        return jsonify({'error': '요청 본문 없음'}), 400
     sid = body.get('session_id')
     csv_str = body['csv']
-    threshold = float(body.get('threshold', 0.5))
 
     state = load_state(sid)
     if not state:
-        return jsonify({'error': 'ì¸ì ìì'}), 400
+        return jsonify({'error': '세션 없음'}), 400
 
     model = state.get('model')
     if model is None:
-        return jsonify({'error': 'ë¨¼ì  ëª¨ë¸ì íìµí´ì£¼ì¸ì'}), 400
+        return jsonify({'error': '먼저 모델을 학습해주세요'}), 400
 
     feature_names = state['feature_names']
     le = state['le']
@@ -537,33 +536,36 @@ def api_predict():
 
         missing = [f for f in feature_names if f not in df_p.columns]
         if missing:
-            return jsonify({'error': f'ëë½ í¼ì²: {missing}'}), 400
+            return jsonify({'error': f'누락 피처: {missing}'}), 400
 
         X_df = pd.DataFrame(index=df_p.index)
         for f in feature_names:
             col = df_p[f].copy()
             if col.dtype == object:
                 col = pd.to_numeric(col, errors='coerce')
-                if col.isna().all():  # ìì  ë¬¸ìì´ ì»¬ë¼ â 0ì¼ë¡ ì±ì
+                if col.isna().all():  # 완전 문자열 컬럼 → 0으로 채움
                     col = pd.Series(0, index=df_p.index)
             X_df[f] = col
         X_n = X_df.fillna(0).values.astype(float)
 
-        if is_binary and hasattr(model, 'predict_proba'):
-            proba_all = model.predict_proba(X_n)
-            raw_preds = (proba_all[:, 1] >= threshold).astype(int)
-        else:
-            proba_all = None
-            raw_preds = model.predict(X_n)
-
+        raw_preds = model.predict(X_n)
         preds = le.inverse_transform(raw_preds).tolist()
         r = df_n.copy()
-        r['ìì¸¡ê²°ê³¼'] = preds
+        r['예측결과'] = preds
 
         if hasattr(model, 'predict_proba'):
-            proba = proba_all if proba_all is not None else model.predict_proba(X_n)
+            proba = model.predict_proba(X_n)
             classes = le.classes_.tolist()
             for i, cls in enumerate(classes):
                 r[f'P({cls})'] = np.round(proba[:, i], 4)
             if is_binary:
-                r['íë¥ (ìì±)']
+                r['확률(양성)'] = [f'{v:.2f}%' for v in proba[:, 1] * 100]
+
+        return Response(r.to_csv(index=False), mimetype='text/csv')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
