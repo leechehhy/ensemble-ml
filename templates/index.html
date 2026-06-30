@@ -1,11 +1,11 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>EnsembleML Studio</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<link rel="stylesheet" href="/static/style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EnsembleML Studio</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 
@@ -37,304 +37,344 @@
 <!-- ══ App ════════════════════════════════════════════════════════════ -->
 <div id="app" class="hidden">
 
-<header>
-  <div class="header-text">
-    <h1>EnsembleML Studio</h1>
-    <span class="h-sub">트리 기반 앙상블 머신러닝 분석 플랫폼</span>
-  </div>
-  <button id="themeToggle" onclick="toggleTheme()">🌙 다크</button>
-</header>
-
-<div class="steps-wrap">
-  <div class="steps">
-    <div class="step-item">
-      <div class="step-circle active" id="sc1">1</div>
-      <div class="step-lbl active" id="sl1">데이터 업로드</div>
+  <header>
+    <div class="header-text">
+      <h1>EnsembleML Studio</h1>
+      <span class="h-sub">트리 기반 앙상블 머신러닝 분석 플랫폼</span>
     </div>
-    <div class="step-line" id="ln1"></div>
-    <div class="step-item">
-      <div class="step-circle" id="sc2">2</div>
-      <div class="step-lbl" id="sl2">모델 추천</div>
-    </div>
-    <div class="step-line" id="ln2"></div>
-    <div class="step-item">
-      <div class="step-circle" id="sc3">3</div>
-      <div class="step-lbl" id="sl3">파라미터 튜닝</div>
-    </div>
-    <div class="step-line" id="ln3"></div>
-    <div class="step-item">
-      <div class="step-circle" id="sc4">4</div>
-      <div class="step-lbl" id="sl4">예측 실행</div>
-    </div>
-  </div>
-</div>
+    <button id="themeToggle">🌙 다크</button>
+  </header>
 
-<main>
-
-<!-- ══ STEP 1 ══════════════════════════════════════════════════════════ -->
-<div id="step1">
-  <div class="card">
-    <div class="card-title">📂 분석 데이터 업로드 <span class="tag">STEP 1</span></div>
-    <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
-      <div class="ico">📊</div>
-      <div class="ttl">파일을 드래그하거나 클릭하여 업로드</div>
-      <div class="sub" style="margin-bottom:10px;">라벨(정답 컬럼) 포함 학습 데이터셋</div>
-      <span class="badge">.csv</span><span class="badge">.xlsx</span><span class="badge">.xls</span>
-    </div>
-    <input type="file" id="fileInput" accept=".csv,.xlsx,.xls" class="hidden">
-
-    <div id="fileInfo" class="hidden" style="margin-top:14px;">
-      <div class="alert alert-success" id="fileInfoMsg"></div>
-      <div id="prepReport" class="prep-report hidden">
-        <div class="prep-report-title">🔧 전처리 자동 수행 내역</div>
-        <div id="prepIssues"></div>
+  <div class="steps-wrap">
+    <div class="steps">
+      <div class="step-item">
+        <div class="step-circle active" id="sc1">1</div>
+        <div class="step-lbl active" id="sl1">데이터 업로드</div>
       </div>
-    </div>
-
-    <div id="previewSection" class="hidden" style="margin-top:18px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:11px;">
-        <div style="font-size:14px;font-weight:600;">데이터 미리보기 (상위 5행)</div>
-        <div style="display:flex;align-items:center;gap:10px;">
-          <label style="font-size:12px;color:var(--muted);">예측 대상 (Target):</label>
-          <select id="targetSelect"></select>
-        </div>
+      <div class="step-line" id="ln1"></div>
+      <div class="step-item">
+        <div class="step-circle" id="sc2">2</div>
+        <div class="step-lbl" id="sl2">모델 추천</div>
       </div>
-      <div class="tbl-wrap" id="previewTable"></div>
-
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:10px;">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-          <span class="chip" id="infoRows"></span>
-          <span class="chip" id="infoCols"></span>
-          <span class="chip" id="infoTarget"></span>
-        </div>
-        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-          <span id="featCount" style="font-size:12px;color:var(--primary);font-weight:700;"></span>
-          <button class="feat-btn" onclick="featSelectAll()">전체 선택</button>
-          <button class="feat-btn" onclick="featDeselectAll()">전체 해제</button>
-          <button class="feat-btn" onclick="featInvert()">반전</button>
-        </div>
+      <div class="step-line" id="ln2"></div>
+      <div class="step-item">
+        <div class="step-circle" id="sc3">3</div>
+        <div class="step-lbl" id="sl3">파라미터 튜닝</div>
       </div>
-      <div class="feat-warn hidden" id="featWarn" style="font-size:11px;color:var(--danger);margin-top:4px;">⚠ 최소 1개 이상 선택해야 합니다.</div>
-
-      <div style="margin-top:14px;padding:12px 16px;background:rgba(224,122,16,.06);border-radius:10px;border:1px solid rgba(224,122,16,.15);">
-        <div style="display:flex;align-items:center;gap:14px;">
-          <span style="font-size:12px;font-weight:600;white-space:nowrap;color:var(--text);">✂️ 훈련/테스트 분할</span>
-          <input type="range" id="splitSlider" min="60" max="90" step="5" value="80"
-            oninput="updateSplitLabel(this.value)"
-            style="flex:1;accent-color:var(--primary);cursor:pointer">
-          <div id="splitLabel" style="font-size:12px;font-weight:700;color:var(--secondary);min-width:100px;text-align:right">훈련 80% / 테스트 20%</div>
-        </div>
-        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:3px;padding:0 0 0 100px;">
-          <span>60:40</span><span>70:30</span><span>80:20</span><span>90:10</span>
-        </div>
-      </div>
-
-      <div class="dist-section hidden" id="distSection">
-        <div class="dist-title" id="distTitle">📊 클래스 분포 분석 <span id="distImbalanceTag"></span></div>
-        <div id="distChart"></div>
-
-        <div id="imbalanceBlock" class="hidden">
-          <div class="imbalance-warn" id="imbalanceWarnMsg"></div>
-          <div class="balance-label">⚖️ 불균형 처리 전략 선택</div>
-          <div class="balance-opts" id="balanceOpts"></div>
-        </div>
-      </div>
-
-      <div id="corrToggleRow" class="hidden" style="margin-top:12px;">
-        <button onclick="openCorrPanel()" style="width:100%;padding:9px;background:var(--surface2);border:1px dashed var(--border);border-radius:10px;cursor:pointer;font-size:13px;color:var(--primary);font-weight:600;transition:.2s" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='var(--surface2)'">
-          📊 데이터 탐색 열기 &nbsp;(상관관계 · 피처 분포 · 타깃별 비교) ▼
-        </button>
-      </div>
-      <div id="corrPanel" class="hidden" style="margin-top:12px;padding:16px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-          <div style="font-size:14px;font-weight:700;color:var(--text);">📊 데이터 탐색</div>
-          <button onclick="closeCorrPanel()" style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--muted);line-height:1;">✕</button>
-        </div>
-        <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;" id="exploreTabs">
-          <button class="tab-btn active" id="etab-corr" onclick="showExploreTab('corr',this)">🌡️ 상관관계 히트맵</button>
-          <button class="tab-btn" id="etab-dist" onclick="showExploreTab('dist',this)">📊 피처 분포</button>
-          <button class="tab-btn" id="etab-target" onclick="showExploreTab('target',this)">🎯 타깃별 비교</button>
-        </div>
-        <div id="exploreTabCorr">
-          <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">수치형 피처 간 상관계수(-1~+1). 빨강=양의 상관, 파랑=음의 상관.</div>
-          <div style="overflow-x:auto;"><canvas id="corrCanvas" style="border-radius:8px;display:block;"></canvas></div>
-          <div id="corrLegend" style="margin-top:6px;font-size:11px;color:var(--muted);text-align:center;"></div>
-        </div>
-        <div id="exploreTabDist" class="hidden">
-          <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">각 피처의 값 분포 (수치형: 히스토그램, 범주형: 막대)</div>
-          <div id="distChartArea" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;"></div>
-        </div>
-        <div id="exploreTabTarget" class="hidden">
-          <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">타깃 클래스별 수치형 피처 평균 비교</div>
-          <div style="overflow-x:auto;"><canvas id="targetCanvas" style="border-radius:8px;display:block;"></canvas></div>
-        </div>
-      </div>
-
-      <div style="margin-top:14px;padding:12px 16px;background:rgba(224,122,16,.06);border-radius:10px;border:1px solid rgba(224,122,16,.15);">
-        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-          <span style="font-size:12px;font-weight:600;white-space:nowrap;color:var(--text);">🔄 교차검증 방식</span>
-          <div style="display:flex;gap:6px;">
-            <button id="cv3btn" onclick="setCvFolds(3,this)" class="btn btn-outline" style="font-size:11px;padding:4px 12px;">3-Fold <span style="color:var(--muted);font-size:10px;">(빠름)</span></button>
-            <button id="cv5btn" onclick="setCvFolds(5,this)" class="btn btn-primary" style="font-size:11px;padding:4px 12px;">5-Fold <span style="font-size:10px;">(권장)</span></button>
-            <button id="cv10btn" onclick="setCvFolds(10,this)" class="btn btn-outline" style="font-size:11px;padding:4px 12px;">10-Fold <span style="color:var(--muted);font-size:10px;">(정밀)</span></button>
-          </div>
-          <span id="cvFoldsDesc" style="font-size:11px;color:var(--muted);">폴드가 많을수록 신뢰도 ↑, 속도 ↓</span>
-        </div>
-      </div>
-
-      <div style="margin-top:18px;">
-        <button class="btn btn-primary" id="step1NextBtn" onclick="goStep2()">모델 추천 받기 →</button>
+      <div class="step-line" id="ln3"></div>
+      <div class="step-item">
+        <div class="step-circle" id="sc4">4</div>
+        <div class="step-lbl" id="sl4">예측 실행</div>
       </div>
     </div>
   </div>
-</div>
 
-<!-- ══ STEP 2 ══════════════════════════════════════════════════════════ -->
-<div id="step2" class="hidden">
-  <div class="card">
-    <div class="card-title">🏆 모델 추천 <span class="tag">STEP 2</span></div>
+  <main>
 
-    <div id="evalProgress">
-      <div class="prog-header">
-        <div>
-          <div class="prog-title" id="progTitle">모델 교차검증 준비 중...</div>
-          <div class="prog-sub" id="progSub">잠시 기다려주세요</div>
+    <!-- ══ STEP 1 ══════════════════════════════════════════════════════ -->
+    <div id="step1">
+      <div class="card">
+        <div class="card-title">📂 분석 데이터 업로드 <span class="tag">STEP 1</span></div>
+
+        <!-- 업로드 존 -->
+        <div class="upload-zone" id="uploadZone">
+          <div class="ico">📊</div>
+          <div class="ttl">파일을 드래그하거나 클릭하여 업로드</div>
+          <div class="sub" style="margin-bottom:10px;">라벨(정답 컬럼) 포함 학습 데이터셋</div>
+          <span class="badge">.csv</span><span class="badge">.xlsx</span><span class="badge">.xls</span>
         </div>
-        <div class="prog-pct" id="progPct">0%</div>
-      </div>
-      <div class="prog-bar-wrap"><div class="prog-bar" id="progBar" style="width:0%"></div></div>
-      <div class="prog-log" id="progLog"></div>
-      <div class="eta" id="etaMsg"></div>
-    </div>
+        <input type="file" id="fileInput" accept=".csv,.xlsx,.xls" class="hidden">
 
-    <div id="step2Results" class="hidden">
-      <div class="alert alert-info" style="margin-bottom:18px;" id="step2CvInfo">
-        📊 교차검증 (F1-weighted) 결과입니다. 가장 높은 성능 모델이 <strong>자동 추천</strong>됩니다.
-      </div>
-      <div class="model-grid" id="modelGrid"></div>
-      <div id="modelDescPanel" style="display:none;margin-top:16px;padding:16px 20px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;"></div>
-      <div style="margin-top:22px;display:flex;gap:8px;">
-        <button class="btn btn-outline" onclick="goStep1()">← 다시 업로드</button>
-        <button class="btn btn-primary" onclick="goStep3()">파라미터 튜닝하기 →</button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ══ STEP 3 ══════════════════════════════════════════════════════════ -->
-<div id="step3" class="hidden">
-  <div class="card">
-    <div class="card-title">⚙️ 파라미터 튜닝 <span class="tag">STEP 3</span></div>
-
-    <div style="margin-bottom:14px;">
-      <div style="font-size:12px;color:var(--muted);margin-bottom:7px;">모델 선택</div>
-      <div class="tab-btns" id="modelTabs"></div>
-      <div id="step3ModelDesc" style="display:none;margin-top:12px;padding:14px 18px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;font-size:13px;"></div>
-    </div>
-
-    <div class="two-col">
-      <div>
-        <div style="font-size:13px;font-weight:600;margin-bottom:13px;">파라미터 설정</div>
-        <div id="paramControls" class="param-grid"></div>
-        <div id="thresholdControl" class="hidden">
-          <div class="threshold-group">
-            <div class="threshold-lbl">⚠️ 분류 임계값 (Threshold) — 이진분류 전용</div>
-            <div class="param-lbl">Threshold: <span id="thresholdVal">0.50</span></div>
-            <input type="range" class="slider" id="thresholdSlider" min="0.1" max="0.9" step="0.01" value="0.5"
-              oninput="document.getElementById('thresholdVal').textContent=parseFloat(this.value).toFixed(2);debounceEval()">
+        <!-- 파일 정보 -->
+        <div id="fileInfo" class="hidden" style="margin-top:14px;">
+          <div class="alert alert-success" id="fileInfoMsg"></div>
+          <div id="prepReport" class="prep-report hidden">
+            <div class="prep-report-title">🔧 전처리 자동 수행 내역</div>
+            <div id="prepIssues"></div>
           </div>
         </div>
-        <div style="margin-top:18px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-primary" onclick="runEval()" id="evalBtn">📈 성능 평가 실행</button>
-          <button class="btn btn-tune" onclick="autoTuneParams()" id="tuneBtn">🎯 추천 파라미터</button>
-        </div>
-        <div id="tuneResult" class="tune-result hidden"></div>
-      </div>
-      <div>
-        <div style="font-size:13px;font-weight:600;margin-bottom:13px;">성능 지표</div>
-        <div class="metrics-grid" id="metricsGrid">
-          <div class="metric-card"><div class="metric-val" style="color:var(--muted)">—</div><div class="metric-lbl">Accuracy</div></div>
-          <div class="metric-card"><div class="metric-val" style="color:var(--muted)">—</div><div class="metric-lbl">Precision</div></div>
-          <div class="metric-card"><div class="metric-val" style="color:var(--muted)">—</div><div class="metric-lbl">Recall</div></div>
-          <div class="metric-card"><div class="metric-val" style="color:var(--muted)">—</div><div class="metric-lbl">F1 Score</div></div>
-        </div>
-        <div id="cmSection" class="hidden">
-          <div style="font-size:13px;font-weight:600;margin-bottom:10px;">Confusion Matrix</div>
-          <div style="overflow-x:auto" id="cmWrap"></div>
-        </div>
-        <div id="perClassSection" class="hidden"></div>
-      </div>
-    </div>
 
-    <div id="fiSection" class="hidden" style="margin-top:22px;">
-      <div style="font-size:13px;font-weight:600;margin-bottom:12px;">📊 Feature Importance (상위 10개)</div>
-      <div id="fiChart"></div>
-    </div>
+        <!-- 데이터 미리보기 -->
+        <div id="previewSection" class="hidden" style="margin-top:18px;">
 
-    <div style="margin-top:22px;display:flex;gap:8px;">
-      <button class="btn btn-outline" onclick="goStep2()">← 모델 재선택</button>
-      <button class="btn btn-primary" id="step3NextBtn" disabled onclick="goStep4()">예측 실행하기 →</button>
-    </div>
-  </div>
-</div>
-
-<!-- ══ STEP 4 ══════════════════════════════════════════════════════════ -->
-<div id="step4" class="hidden">
-  <div class="card">
-    <div class="card-title">🔮 새 데이터 예측 <span class="tag">STEP 4</span></div>
-
-    <div class="alert alert-warning" style="margin-bottom:18px;">
-      ⚠️ 예측 데이터는 학습 데이터와 동일한 컬럼 구조여야 합니다 (Target 컬럼 제외 가능)
-    </div>
-
-    <div class="two-col">
-      <div>
-        <div class="upload-zone" id="predZone" onclick="document.getElementById('predInput').click()" style="padding:28px;">
-          <div class="ico" style="font-size:36px;">📤</div>
-          <div class="ttl" style="font-size:13px;">예측할 데이터 업로드</div>
-          <div class="sub">.csv / .xlsx</div>
-        </div>
-        <input type="file" id="predInput" accept=".csv,.xlsx,.xls" class="hidden">
-        <div id="predFileInfo" class="hidden" style="margin-top:11px;">
-          <div style="display:flex;align-items:center;gap:8px;">
-            <div class="alert alert-success" id="predFileMsg" style="flex:1;margin:0;"></div>
-            <button onclick="clearPredFile()" title="파일 제거"
-              style="flex-shrink:0;padding:6px 11px;background:var(--danger);color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:700;line-height:1;transition:.2s"
-              onmouseover="this.style.opacity='.8'" onmouseout="this.style.opacity='1'">✕</button>
+          <!-- 헤더: 미리보기 타이틀 + Target 선택 -->
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:11px;">
+            <div style="font-size:14px;font-weight:600;">데이터 미리보기 (상위 5행)</div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <label style="font-size:12px;color:var(--muted);">예측 대상 (Target):</label>
+              <select id="targetSelect"></select>
+            </div>
           </div>
+
+          <!-- 미리보기 테이블 -->
+          <div class="tbl-wrap" id="previewTable"></div>
+
+          <!-- 데이터 정보 + 피처 버튼 -->
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:10px;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span class="chip" id="infoRows"></span>
+              <span class="chip" id="infoCols"></span>
+              <span class="chip" id="infoTarget"></span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+              <span id="featCount" style="font-size:12px;color:var(--primary);font-weight:700;"></span>
+              <button class="feat-btn" id="btnFeatAll">전체 선택</button>
+              <button class="feat-btn" id="btnFeatNone">전체 해제</button>
+              <button class="feat-btn" id="btnFeatInvert">반전</button>
+            </div>
+          </div>
+
+          <!-- 피처 칩 (app.js가 여기에 렌더링) -->
+          <div id="featChipsWrap" class="feat-chips" style="margin-top:14px;"></div>
+
+          <!-- 피처 최소 1개 경고 -->
+          <div class="feat-warn hidden" id="featWarn" style="font-size:11px;color:var(--danger);margin-top:4px;">
+            ⚠ 최소 1개 이상 선택해야 합니다.
+          </div>
+
+          <!-- 훈련/테스트 분할 -->
+          <div style="margin-top:14px;padding:12px 16px;background:rgba(224,122,16,.06);border-radius:10px;border:1px solid rgba(224,122,16,.15);">
+            <div style="display:flex;align-items:center;gap:14px;">
+              <span style="font-size:12px;font-weight:600;white-space:nowrap;color:var(--text);">✂️ 훈련/테스트 분할</span>
+              <input type="range" id="splitSlider" min="60" max="90" step="5" value="80"
+                style="flex:1;accent-color:var(--primary);cursor:pointer">
+              <div id="splitLabel" style="font-size:12px;font-weight:700;color:var(--secondary);min-width:100px;text-align:right">
+                훈련 80% / 테스트 20%
+              </div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:3px;padding:0 0 0 100px;">
+              <span>60:40</span><span>70:30</span><span>80:20</span><span>90:10</span>
+            </div>
+          </div>
+
+          <!-- 클래스 분포 (파일 업로드 직후 클라이언트에서 렌더링) -->
+          <div class="dist-section hidden" id="distSection">
+            <div class="dist-title" id="distTitle">
+              📊 클래스 분포 분석 <span id="distImbalanceTag"></span>
+            </div>
+            <div id="distChart"></div>
+            <div id="imbalanceBlock" class="hidden">
+              <div class="imbalance-warn" id="imbalanceWarnMsg"></div>
+              <div class="balance-label">⚖️ 불균형 처리 전략 선택</div>
+              <div class="balance-opts" id="balanceOpts"></div>
+            </div>
+          </div>
+
+          <!-- 데이터 탐색 패널 토글 (previewSection 안에 있어 자동으로 숨겨짐) -->
+          <div id="corrToggleRow" style="margin-top:12px;">
+            <button id="corrToggleBtn"
+              style="width:100%;padding:9px;background:var(--surface2);border:1px dashed var(--border);border-radius:10px;cursor:pointer;font-size:13px;color:var(--primary);font-weight:600;transition:.2s">
+              📊 데이터 탐색 열기 &nbsp;(상관관계 · 피처 분포 · 타깃별 비교) ▼
+            </button>
+          </div>
+
+          <div id="corrPanel" class="hidden" style="margin-top:12px;padding:16px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+              <div style="font-size:14px;font-weight:700;color:var(--text);">📊 데이터 탐색</div>
+              <button id="corrCloseBtn" style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--muted);line-height:1;">✕</button>
+            </div>
+            <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
+              <button class="tab-btn active" id="etab-corr">🌡️ 상관관계 히트맵</button>
+              <button class="tab-btn" id="etab-dist">📊 피처 분포</button>
+              <button class="tab-btn" id="etab-target">🎯 타깃별 비교</button>
+            </div>
+            <div id="exploreTabCorr">
+              <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">수치형 피처 간 상관계수(-1~+1). 빨강=양의 상관, 파랑=음의 상관.</div>
+              <div style="overflow-x:auto;"><canvas id="corrCanvas" style="border-radius:8px;display:block;"></canvas></div>
+              <div id="corrLegend" style="margin-top:6px;font-size:11px;color:var(--muted);text-align:center;"></div>
+            </div>
+            <div id="exploreTabDist" class="hidden">
+              <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">각 피처의 값 분포 (수치형: 히스토그램, 범주형: 막대)</div>
+              <div id="distChartArea" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;"></div>
+            </div>
+            <div id="exploreTabTarget" class="hidden">
+              <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">타깃 클래스별 수치형 피처 평균 비교</div>
+              <div style="overflow-x:auto;"><canvas id="targetCanvas" style="border-radius:8px;display:block;"></canvas></div>
+            </div>
+          </div>
+
+          <!-- 교차검증 방식 -->
+          <div style="margin-top:14px;padding:12px 16px;background:rgba(224,122,16,.06);border-radius:10px;border:1px solid rgba(224,122,16,.15);">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+              <span style="font-size:12px;font-weight:600;white-space:nowrap;color:var(--text);">🔄 교차검증 방식</span>
+              <div style="display:flex;gap:6px;">
+                <button id="cv3btn" class="btn btn-outline" style="font-size:11px;padding:4px 12px;">
+                  3-Fold <span style="color:var(--muted);font-size:10px;">(빠름)</span>
+                </button>
+                <button id="cv5btn" class="btn btn-primary" style="font-size:11px;padding:4px 12px;">
+                  5-Fold <span style="font-size:10px;">(권장)</span>
+                </button>
+                <button id="cv10btn" class="btn btn-outline" style="font-size:11px;padding:4px 12px;">
+                  10-Fold <span style="color:var(--muted);font-size:10px;">(정밀)</span>
+                </button>
+              </div>
+              <span id="cvFoldsDesc" style="font-size:11px;color:var(--muted);">폴드가 많을수록 신뢰도 ↑, 속도 ↓</span>
+            </div>
+          </div>
+
+          <div style="margin-top:18px;">
+            <button class="btn btn-primary" id="step1NextBtn">모델 추천 받기 →</button>
+          </div>
+        </div><!-- /previewSection -->
+      </div>
+    </div><!-- /step1 -->
+
+    <!-- ══ STEP 2 ══════════════════════════════════════════════════════ -->
+    <div id="step2" class="hidden">
+      <div class="card">
+        <div class="card-title">🏆 모델 추천 <span class="tag">STEP 2</span></div>
+
+        <div id="evalProgress">
+          <div class="prog-header">
+            <div>
+              <div class="prog-title" id="progTitle">모델 교차검증 준비 중...</div>
+              <div class="prog-sub" id="progSub">잠시 기다려주세요</div>
+            </div>
+            <div class="prog-pct" id="progPct">0%</div>
+          </div>
+          <div class="prog-bar-wrap"><div class="prog-bar" id="progBar" style="width:0%"></div></div>
+          <div class="prog-log" id="progLog"></div>
+          <div class="eta" id="etaMsg"></div>
         </div>
-        <div style="margin-top:14px;display:flex;align-items:center;gap:10px;">
-          <button class="btn btn-primary" id="predictBtn" disabled onclick="runPredict()">🔮 예측 실행</button>
-          <div id="predictSpinner" class="hidden" style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;">
-            <div class="spin-sm"></div> 예측 중...
+
+        <div id="step2Results" class="hidden">
+          <div class="alert alert-info" style="margin-bottom:18px;" id="step2CvInfo">
+            📊 교차검증 (F1-weighted) 결과입니다. 가장 높은 성능 모델이 <strong>자동 추천</strong>됩니다.
+          </div>
+          <div class="model-grid" id="modelGrid"></div>
+          <div id="modelDescPanel" style="display:none;margin-top:16px;padding:16px 20px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;"></div>
+          <div style="margin-top:22px;display:flex;gap:8px;">
+            <button class="btn btn-outline" id="step2BackBtn">← 다시 업로드</button>
+            <button class="btn btn-primary" id="step2NextBtn">파라미터 튜닝하기 →</button>
           </div>
         </div>
       </div>
-      <div id="predSummary" class="hidden">
-        <div style="font-size:13px;font-weight:600;margin-bottom:11px;">예측 요약</div>
-        <div id="predSummaryContent"></div>
-      </div>
-    </div>
+    </div><!-- /step2 -->
 
-    <div id="predResults" class="hidden" style="margin-top:22px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:11px;">
-        <div style="font-size:13px;font-weight:600;">예측 결과 미리보기</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-success" onclick="downloadResults()">⬇️ CSV 다운로드</button>
-          <button class="btn btn-outline" onclick="resetPredict()" style="font-size:13px;">🔄 다른 데이터 예측하기</button>
+    <!-- ══ STEP 3 ══════════════════════════════════════════════════════ -->
+    <div id="step3" class="hidden">
+      <div class="card">
+        <div class="card-title">⚙️ 파라미터 튜닝 <span class="tag">STEP 3</span></div>
+
+        <div style="margin-bottom:14px;">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:7px;">모델 선택</div>
+          <div class="tab-btns" id="modelTabs"></div>
+          <div id="step3ModelDesc" style="display:none;margin-top:12px;padding:14px 18px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;font-size:13px;"></div>
+        </div>
+
+        <div class="two-col">
+          <!-- 파라미터 설정 -->
+          <div>
+            <div style="font-size:13px;font-weight:600;margin-bottom:13px;">파라미터 설정</div>
+            <div id="paramControls" class="param-grid"></div>
+
+            <!-- 임계값 (이진분류 전용) -->
+            <div id="thresholdControl" class="hidden">
+              <div class="threshold-group">
+                <div class="threshold-lbl">⚠️ 분류 임계값 (Threshold) — 이진분류 전용</div>
+                <div class="param-lbl">Threshold: <span id="thresholdVal">0.50</span></div>
+                <input type="range" class="slider" id="thresholdSlider"
+                  min="0.1" max="0.9" step="0.01" value="0.5">
+              </div>
+            </div>
+
+            <div style="margin-top:18px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-primary" id="evalBtn">📈 성능 평가 실행</button>
+              <button class="btn btn-tune" id="tuneBtn">🎯 추천 파라미터</button>
+            </div>
+            <div id="tuneResult" class="tune-result hidden"></div>
+          </div>
+
+          <!-- 성능 지표 -->
+          <div>
+            <div style="font-size:13px;font-weight:600;margin-bottom:13px;">성능 지표</div>
+            <div class="metrics-grid" id="metricsGrid">
+              <div class="metric-card"><div class="metric-val" style="color:var(--muted)">—</div><div class="metric-lbl">Accuracy</div></div>
+              <div class="metric-card"><div class="metric-val" style="color:var(--muted)">—</div><div class="metric-lbl">Precision</div></div>
+              <div class="metric-card"><div class="metric-val" style="color:var(--muted)">—</div><div class="metric-lbl">Recall</div></div>
+              <div class="metric-card"><div class="metric-val" style="color:var(--muted)">—</div><div class="metric-lbl">F1 Score</div></div>
+            </div>
+            <div id="cmSection" class="hidden">
+              <div style="font-size:13px;font-weight:600;margin-bottom:10px;">Confusion Matrix</div>
+              <div style="overflow-x:auto" id="cmWrap"></div>
+            </div>
+            <div id="perClassSection" class="hidden"></div>
+          </div>
+        </div>
+
+        <!-- Feature Importance -->
+        <div id="fiSection" class="hidden" style="margin-top:22px;">
+          <div style="font-size:13px;font-weight:600;margin-bottom:12px;">📊 Feature Importance (상위 10개)</div>
+          <div id="fiChart"></div>
+        </div>
+
+        <div style="margin-top:22px;display:flex;gap:8px;">
+          <button class="btn btn-outline" id="step3BackBtn">← 모델 재선택</button>
+          <button class="btn btn-primary" id="step3NextBtn" disabled>예측 실행하기 →</button>
         </div>
       </div>
-      <div class="tbl-wrap" id="predTable"></div>
-    </div>
+    </div><!-- /step3 -->
 
-    <div style="margin-top:18px;">
-      <button class="btn btn-outline" onclick="goStep3()">← 파라미터 수정</button>
-    </div>
-  </div>
-</div>
+    <!-- ══ STEP 4 ══════════════════════════════════════════════════════ -->
+    <div id="step4" class="hidden">
+      <div class="card">
+        <div class="card-title">🔮 새 데이터 예측 <span class="tag">STEP 4</span></div>
 
-</main>
+        <div class="alert alert-warning" style="margin-bottom:18px;">
+          ⚠️ 예측 데이터는 학습 데이터와 동일한 컬럼 구조여야 합니다 (Target 컬럼 제외 가능)
+        </div>
+
+        <div class="two-col">
+          <div>
+            <div class="upload-zone" id="predZone" style="padding:28px;">
+              <div class="ico" style="font-size:36px;">📤</div>
+              <div class="ttl" style="font-size:13px;">예측할 데이터 업로드</div>
+              <div class="sub">.csv / .xlsx</div>
+            </div>
+            <input type="file" id="predInput" accept=".csv,.xlsx,.xls" class="hidden">
+
+            <div id="predFileInfo" class="hidden" style="margin-top:11px;">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <div class="alert alert-success" id="predFileMsg" style="flex:1;margin:0;"></div>
+                <button id="predClearBtn" title="파일 제거"
+                  style="flex-shrink:0;padding:6px 11px;background:var(--danger);color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:700;line-height:1;transition:.2s">✕</button>
+              </div>
+            </div>
+
+            <div style="margin-top:14px;display:flex;align-items:center;gap:10px;">
+              <button class="btn btn-primary" id="predictBtn" disabled>🔮 예측 실행</button>
+              <div id="predictSpinner" class="hidden" style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;">
+                <div class="spin-sm"></div> 예측 중...
+              </div>
+            </div>
+          </div>
+
+          <div id="predSummary" class="hidden">
+            <div style="font-size:13px;font-weight:600;margin-bottom:11px;">예측 요약</div>
+            <div id="predSummaryContent"></div>
+          </div>
+        </div>
+
+        <div id="predResults" class="hidden" style="margin-top:22px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:11px;">
+            <div style="font-size:13px;font-weight:600;">예측 결과 미리보기</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-success" id="downloadBtn">⬇️ CSV 다운로드</button>
+              <button class="btn btn-outline" id="resetPredBtn" style="font-size:13px;">🔄 다른 데이터 예측하기</button>
+            </div>
+          </div>
+          <div class="tbl-wrap" id="predTable"></div>
+        </div>
+
+        <div style="margin-top:18px;">
+          <button class="btn btn-outline" id="step4BackBtn">← 파라미터 수정</button>
+        </div>
+      </div>
+    </div><!-- /step4 -->
+
+  </main>
 </div><!-- #app -->
+
 <script src="/static/app.js"></script>
 </body>
 </html>

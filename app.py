@@ -4,12 +4,12 @@ from flask import Flask, request, jsonify, send_from_directory, Response
 
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import cross_val_score, StratifiedKFold, train_test_split, ParameterSampler
+from sklearn.model_selection import StratifiedKFold, train_test_split, ParameterSampler
 from sklearn.ensemble import (RandomForestClassifier, GradientBoostingClassifier,
-    ExtraTreesClassifier, AdaBoostClassifier, HistGradientBoostingClassifier)
+                              ExtraTreesClassifier, AdaBoostClassifier, HistGradientBoostingClassifier)
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.metrics import (accuracy_score, precision_score, recall_score,
-    f1_score, confusion_matrix, roc_auc_score)
+                             f1_score, confusion_matrix, roc_auc_score)
 from sklearn.preprocessing import LabelEncoder
 from collections import Counter
 
@@ -32,13 +32,13 @@ def _cleanup_jobs():
 try:
     from xgboost import XGBClassifier as _XGB
     _xgb_ok = True
-except:
+except Exception:
     _xgb_ok = False
 
 try:
     from catboost import CatBoostClassifier as _CBC
     _catboost_ok = True
-except:
+except Exception:
     _catboost_ok = False
 
 # ─────────────────────────────────────────────
@@ -122,13 +122,26 @@ def _make_model(name, params=None):
         return _CBC(**kw, random_state=42, verbose=0, thread_count=1, task_type='CPU')
     raise ValueError(f'Unknown model: {name}')
 
-CW_MODELS = {'Random Forest', 'Extra Trees', 'HistGBM (LightGBM계열)', 'CatBoost'}
+CW_MODELS      = {'Random Forest', 'Extra Trees', 'HistGBM (LightGBM계열)', 'CatBoost'}
 CW_UNSUPPORTED = {'Gradient Boosting', 'AdaBoost', 'XGBoost'}
+
+def _cross_val_f1(make_model_fn, X, y, cv, sample_weight=None):
+    """수동 CV — sklearn fit_params/params API 변경 영향 없음."""
+    scores = []
+    for tr, val in cv.split(X, y):
+        m = make_model_fn()
+        if sample_weight is not None:
+            m.fit(X[tr], y[tr], sample_weight=sample_weight[tr])
+        else:
+            m.fit(X[tr], y[tr])
+        pred   = m.predict(X[val])
+        scores.append(f1_score(y[val], pred, average='weighted', zero_division=0))
+    return np.array(scores)
 
 def _compute_sample_weight(y):
     counts = Counter(y)
-    total = len(y)
-    n_cls = len(counts)
+    total  = len(y)
+    n_cls  = len(counts)
     w = {c: total / (n_cls * cnt) for c, cnt in counts.items()}
     return np.array([w[yi] for yi in y])
 
@@ -140,7 +153,7 @@ def _resample(X, y, strategy):
         Xp, yp = [X.copy()], [y.copy()]
         for cls, cnt in counts.items():
             if cnt < target_n:
-                idx = np.where(y == cls)[0]
+                idx   = np.where(y == cls)[0]
                 extra = np.random.choice(idx, target_n - cnt, replace=True)
                 Xp.append(X[extra]); yp.append(y[extra])
         Xr, yr = np.vstack(Xp), np.concatenate(yp)
@@ -148,9 +161,9 @@ def _resample(X, y, strategy):
         return Xr[shuf], yr[shuf]
     elif strategy == 'undersample':
         target_n = min(counts.values())
-        Xp, yp = [], []
+        Xp, yp  = [], []
         for cls in counts:
-            idx = np.where(y == cls)[0]
+            idx    = np.where(y == cls)[0]
             chosen = np.random.choice(idx, target_n, replace=False)
             Xp.append(X[chosen]); yp.append(y[chosen])
         Xr, yr = np.vstack(Xp), np.concatenate(yp)
@@ -192,18 +205,18 @@ def api_load_data():
     body = request.get_json(silent=True)
     if not body:
         return jsonify({'error': '요청 본문이 없습니다'}), 400
-    sid = body.get('session_id', str(uuid.uuid4()))
-    csv_str = body.get('csv', '')
-    target_col = body.get('target', '')
+    sid              = body.get('session_id', str(uuid.uuid4()))
+    csv_str          = body.get('csv', '')
+    target_col       = body.get('target', '')
     if not csv_str or not target_col:
         return jsonify({'error': 'csv 또는 target 누락'}), 400
     selected_features = body.get('features', [])
-    balance_strategy = body.get('balance', 'none')
-    test_size = float(body.get('test_size', 0.2))
+    balance_strategy  = body.get('balance', 'none')
+    test_size         = float(body.get('test_size', 0.2))
 
     try:
         df = pd.read_csv(io.StringIO(csv_str))
-        df.columns = [c.strip() for c in df.columns]  # 컬럼명 공백 제거
+        df.columns = [c.strip() for c in df.columns]
         feature_names = [c for c in (selected_features or df.columns.tolist()) if c != target_col and c in df.columns]
         df, prep_issues = _auto_preprocess(df, target_col, feature_names)
 
@@ -211,7 +224,6 @@ def api_load_data():
         for col in feature_names:
             if col not in df.columns:
                 continue
-            # float 변환 시도 → 실패하면 LabelEncoder 적용
             try:
                 df[col].astype(float)
             except (ValueError, TypeError):
@@ -219,7 +231,6 @@ def api_load_data():
                 df[col] = enc.fit_transform(df[col].fillna('missing').astype(str))
                 encoders[col] = enc
 
-        # 최종 안전장치: 컬럼별로 float 변환 가능하게 강제 처리
         X_safe = df[feature_names].copy()
         for col in X_safe.columns:
             try:
@@ -229,9 +240,9 @@ def api_load_data():
                     X_safe[col].fillna('missing').astype(str)
                 ).astype(float)
 
-        X = X_safe.fillna(0).values.astype(float)
+        X  = X_safe.fillna(0).values.astype(float)
         le = LabelEncoder()
-        y = le.fit_transform(df[target_col].astype(str))
+        y  = le.fit_transform(df[target_col].astype(str))
         is_binary = len(le.classes_) == 2
         dist = {str(le.inverse_transform([k])[0]): int(v) for k, v in Counter(y).items()}
 
@@ -253,15 +264,14 @@ def api_load_data():
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 
-
 @app.route('/api/evaluate_single', methods=['POST'])
 def api_evaluate_single():
     body = request.get_json(silent=True)
     if not body:
         return jsonify({'ok': False, 'err': '요청 본문 없음'}), 400
-    sid = body.get('session_id')
+    sid        = body.get('session_id')
     model_name = body['model']
-    cv_folds = int(body.get('cv_folds', 5))
+    cv_folds   = int(body.get('cv_folds', 5))
 
     state = load_state(sid)
     if not state:
@@ -269,49 +279,45 @@ def api_evaluate_single():
 
     X, y = state['X'], state['y']
     balance_strategy = state['balance_strategy']
-    cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+    cv   = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
     strat = 'balanced' if balance_strategy in ('balanced','oversample','undersample') else 'none'
 
+    use_sw = strat == 'balanced' and model_name in CW_UNSUPPORTED
+    sw     = _compute_sample_weight(y) if use_sw else None
     try:
-        m = _make_model_balanced(model_name, {}, strat)
-        fit_p = {}
-        if strat == 'balanced' and model_name in CW_UNSUPPORTED:
-            fit_p = {'sample_weight': _compute_sample_weight(y)}
-        try:
-            scores = cross_val_score(m, X, y, cv=cv, scoring='f1_weighted', error_score=0,
-                                     **({"fit_params": fit_p} if fit_p else {}))
-        except TypeError:
-            scores = cross_val_score(m, X, y, cv=cv, scoring='f1_weighted', error_score=0)
+        scores = _cross_val_f1(
+            lambda: _make_model_balanced(model_name, {}, strat),
+            X, y, cv, sample_weight=sw
+        )
         return jsonify({'name': model_name, 'f1': float(scores.mean()), 'std': float(scores.std()), 'ok': True, 'cv_folds': cv_folds})
     except Exception as e:
+        # sample_weight 없이 재시도 (fallback)
         try:
-            m2 = _make_model_balanced(model_name, {}, strat)
-            scores2 = cross_val_score(m2, X, y, cv=cv, scoring='f1_weighted', error_score=0)
+            scores2 = _cross_val_f1(lambda: _make_model_balanced(model_name, {}, strat), X, y, cv)
             return jsonify({'name': model_name, 'f1': float(scores2.mean()), 'std': float(scores2.std()), 'ok': True, 'cv_folds': cv_folds})
         except Exception as e2:
             return jsonify({'name': model_name, 'f1': 0.0, 'std': 0.0, 'ok': False, 'err': str(e2)})
-
 
 @app.route('/api/train_and_eval', methods=['POST'])
 def api_train_and_eval():
     body = request.get_json(silent=True)
     if not body:
         return jsonify({'error': '요청 본문 없음'}), 400
-    sid = body.get('session_id')
+    sid        = body.get('session_id')
     model_name = body['model']
-    params = body.get('params', {})
-    threshold = float(body.get('threshold', 0.5))
+    params     = body.get('params', {})
+    threshold  = float(body.get('threshold', 0.5))
 
     state = load_state(sid)
     if not state:
         return jsonify({'error': '세션 없음'}), 400
 
-    X, y = state['X'], state['y']
-    le = state['le']
-    feature_names = state['feature_names']
-    is_binary = state['is_binary']
+    X, y             = state['X'], state['y']
+    le               = state['le']
+    feature_names    = state['feature_names']
+    is_binary        = state['is_binary']
     balance_strategy = state['balance_strategy']
-    test_size = state['test_size']
+    test_size        = state['test_size']
 
     try:
         X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=test_size, random_state=42, stratify=y)
@@ -325,41 +331,39 @@ def api_train_and_eval():
             y_pred = m.predict(X_te)
 
         avg = 'binary' if is_binary else 'weighted'
-        cm = confusion_matrix(y_te, y_pred)
+        cm  = confusion_matrix(y_te, y_pred)
         res = {
-            'accuracy': float(accuracy_score(y_te, y_pred)),
+            'accuracy':  float(accuracy_score(y_te, y_pred)),
             'precision': float(precision_score(y_te, y_pred, average=avg, zero_division=0)),
-            'recall': float(recall_score(y_te, y_pred, average=avg, zero_division=0)),
-            'f1': float(f1_score(y_te, y_pred, average=avg, zero_division=0)),
+            'recall':    float(recall_score(y_te, y_pred, average=avg, zero_division=0)),
+            'f1':        float(f1_score(y_te, y_pred, average=avg, zero_division=0)),
             'confusion_matrix': cm.tolist(),
-            'classes': le.classes_.tolist(),
+            'classes':   le.classes_.tolist(),
             'balance_strategy': strat
         }
         if is_binary and hasattr(m, 'predict_proba'):
             try:
                 res['auc'] = float(roc_auc_score(y_te, m.predict_proba(X_te)[:, 1]))
-            except:
+            except Exception:
                 pass
         if is_binary:
             res['per_class'] = {
                 str(le.classes_[i]): {
                     'precision': float(precision_score(y_te, y_pred, pos_label=i, average='binary', zero_division=0)),
-                    'recall': float(recall_score(y_te, y_pred, pos_label=i, average='binary', zero_division=0)),
-                    'f1': float(f1_score(y_te, y_pred, pos_label=i, average='binary', zero_division=0))
+                    'recall':    float(recall_score(y_te, y_pred, pos_label=i, average='binary', zero_division=0)),
+                    'f1':        float(f1_score(y_te, y_pred, pos_label=i, average='binary', zero_division=0))
                 } for i in range(len(le.classes_))
             }
         if hasattr(m, 'feature_importances_'):
             fi = sorted(zip(feature_names, m.feature_importances_.tolist()), key=lambda x: -x[1])[:10]
             res['feature_importance'] = fi
 
-        # Save trained model to state
-        state['model'] = m
+        state['model']     = m
+        state['threshold'] = threshold   # 예측 시 재사용
         save_state(sid, state)
-
         return jsonify(res)
     except Exception as e:
         return jsonify({'error': str(e)}), 400
-
 
 def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
     """Background tuning job."""
@@ -368,17 +372,17 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
         JOBS[job_id] = {'progress': 0, 'done': True, 'error': '세션 없음', 'result': None}
         return
 
-    X, y = state['X'], state['y']
+    X, y      = state['X'], state['y']
     is_binary = state['is_binary']
 
     _GRIDS = {
-        'Random Forest': {'n_estimators':[50,100,200,300],'max_depth':[5,8,12,18,None],'min_samples_leaf':[1,3,5,10],'max_leaf_nodes':[20,50,100,None],'max_features':[0.3,0.5,0.7,0.8],'criterion':['gini','entropy']},
-        'Gradient Boosting': {'n_estimators':[50,100,200],'max_depth':[3,4,5,7],'learning_rate':[0.03,0.05,0.1,0.2],'min_samples_leaf':[1,3,5,10],'max_leaf_nodes':[10,31,50,None]},
-        'Extra Trees': {'n_estimators':[50,100,200,300],'max_depth':[5,10,15,None],'min_samples_leaf':[1,3,5,10],'max_leaf_nodes':[20,50,100,None],'max_features':[0.3,0.5,0.7,0.8]},
-        'AdaBoost': {'n_estimators':[50,100,200],'learning_rate':[0.5,1.0,1.5,2.0],'base_max_depth':[1,2,3]},
-        'XGBoost': {'n_estimators':[50,100,200],'max_depth':[3,4,5,6,8],'learning_rate':[0.03,0.05,0.1,0.2],'min_child_weight':[1,3,5,10],'max_leaves':[0,16,31,63]},
+        'Random Forest':        {'n_estimators':[50,100,200,300],'max_depth':[5,8,12,18,None],'min_samples_leaf':[1,3,5,10],'max_leaf_nodes':[20,50,100,None],'max_features':[0.3,0.5,0.7,0.8],'criterion':['gini','entropy']},
+        'Gradient Boosting':    {'n_estimators':[50,100,200],'max_depth':[3,4,5,7],'learning_rate':[0.03,0.05,0.1,0.2],'min_samples_leaf':[1,3,5,10],'max_leaf_nodes':[10,31,50,None]},
+        'Extra Trees':          {'n_estimators':[50,100,200,300],'max_depth':[5,10,15,None],'min_samples_leaf':[1,3,5,10],'max_leaf_nodes':[20,50,100,None],'max_features':[0.3,0.5,0.7,0.8]},
+        'AdaBoost':             {'n_estimators':[50,100,200],'learning_rate':[0.5,1.0,1.5,2.0],'base_max_depth':[1,2,3]},
+        'XGBoost':              {'n_estimators':[50,100,200],'max_depth':[3,4,5,6,8],'learning_rate':[0.03,0.05,0.1,0.2],'min_child_weight':[1,3,5,10],'max_leaves':[0,16,31,63]},
         'HistGBM (LightGBM계열)': {'max_iter':[50,100,200],'max_depth':[3,5,7,None],'learning_rate':[0.03,0.05,0.1,0.2],'min_samples_leaf':[10,20,30,50],'max_leaf_nodes':[15,31,63,127]},
-        'CatBoost': {'iterations':[50,100,150],'depth':[4,5,6],'learning_rate':[0.03,0.05,0.1,0.15],'l2_leaf_reg':[1,3,5]},
+        'CatBoost':             {'iterations':[50,100,150],'depth':[4,5,6],'learning_rate':[0.03,0.05,0.1,0.15],'l2_leaf_reg':[1,3,5]},
     }
 
     grid = _GRIDS.get(model_name)
@@ -387,39 +391,46 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
         return
 
     try:
-        strat = 'balanced' if balance_strategy in ('balanced','oversample','undersample') else 'none'
-        cv = StratifiedKFold(n_splits=int(cv_folds), shuffle=True, random_state=42)
-        n_iter1 = 10; n_iter2 = 8
+        strat      = 'balanced' if balance_strategy in ('balanced','oversample','undersample') else 'none'
+        cv         = StratifiedKFold(n_splits=int(cv_folds), shuffle=True, random_state=42)
+        n_iter1, n_iter2 = 10, 8
         param_list = list(ParameterSampler(grid, n_iter=n_iter1, random_state=42))
-        best_cv = -1; best_params = None; best_estimator = None
+        best_cv    = -1
+        best_params = None
+        best_estimator = None
+
+        use_sw = strat == 'balanced' and model_name in CW_UNSUPPORTED
+        sw     = _compute_sample_weight(y) if use_sw else None
 
         # Phase 1: 10 trials (0→75%)
         for i, params in enumerate(param_list):
-            m = _make_model_balanced(model_name, dict(params), strat)
+            p = dict(params)
             try:
-                if strat == 'balanced' and model_name in CW_UNSUPPORTED:
-                    sc = cross_val_score(m, X, y, cv=cv, scoring='f1_weighted', error_score=0,
-                                         fit_params={'sample_weight': _compute_sample_weight(y)})
-                else:
-                    sc = cross_val_score(m, X, y, cv=cv, scoring='f1_weighted', error_score=0)
+                sc = _cross_val_f1(
+                    lambda _p=p: _make_model_balanced(model_name, _p, strat),
+                    X, y, cv, sample_weight=sw
+                )
                 s = float(sc.mean())
-            except:
+            except Exception:
                 s = 0.0
             if s > best_cv:
-                best_cv = s; best_params = dict(params)
+                best_cv     = s
+                best_params = p
             JOBS[job_id]['progress'] = int((i + 1) / n_iter1 * 75)
 
         # Phase 2: anti-overfit refinement (75→95%)
         if best_params is None:
             JOBS[job_id] = {'progress': 0, 'done': True, 'result': None, 'error': '모든 파라미터 탐색 실패'}
             return
+
         m_best = _make_model_balanced(model_name, dict(best_params), strat)
         if strat == 'balanced' and model_name in CW_UNSUPPORTED:
             m_best.fit(X, y, sample_weight=_compute_sample_weight(y))
         else:
             m_best.fit(X, y)
-        train_score = float(f1_score(y, m_best.predict(X), average='weighted', zero_division=0))
-        gap = train_score - best_cv; best_estimator = m_best
+        train_score    = float(f1_score(y, m_best.predict(X), average='weighted', zero_division=0))
+        gap            = train_score - best_cv
+        best_estimator = m_best
 
         if gap > 0.15:
             tight = {k: v for k, v in grid.items()}
@@ -429,18 +440,18 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
                 tight['min_samples_leaf'] = [v for v in tight['min_samples_leaf'] if v >= 3] or [5]
             tight_list = list(ParameterSampler(tight, n_iter=n_iter2, random_state=0))
             for j, params2 in enumerate(tight_list):
-                m2 = _make_model_balanced(model_name, dict(params2), strat)
+                p2 = dict(params2)
                 try:
-                    if strat == 'balanced' and model_name in CW_UNSUPPORTED:
-                        sc2 = cross_val_score(m2, X, y, cv=cv, scoring='f1_weighted', error_score=0,
-                                              fit_params={'sample_weight': _compute_sample_weight(y)})
-                    else:
-                        sc2 = cross_val_score(m2, X, y, cv=cv, scoring='f1_weighted', error_score=0)
+                    sc2 = _cross_val_f1(
+                        lambda _p=p2: _make_model_balanced(model_name, _p, strat),
+                        X, y, cv, sample_weight=sw
+                    )
                     s2 = float(sc2.mean())
-                except:
+                except Exception:
                     s2 = 0.0
                 if s2 >= best_cv * 0.95 and s2 > best_cv - 0.05:
-                    best_cv = max(best_cv, s2); best_params = dict(params2)
+                    best_cv     = max(best_cv, s2)
+                    best_params = dict(params2)
                 JOBS[job_id]['progress'] = 75 + int((j + 1) / n_iter2 * 20)
 
         JOBS[job_id]['progress'] = 98
@@ -448,21 +459,22 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
         # Clean params
         clean = {}
         for k, v in best_params.items():
-            if v is None: clean[k] = None
+            if v is None:                  clean[k] = None
             elif isinstance(v, np.integer): clean[k] = int(v)
             elif isinstance(v, np.floating): clean[k] = float(v)
-            else: clean[k] = v
+            else:                           clean[k] = v
 
         # Optimal threshold (binary)
         best_thr = None
         if is_binary and hasattr(best_estimator, 'predict_proba'):
-            proba = best_estimator.predict_proba(X)[:, 1]
+            proba   = best_estimator.predict_proba(X)[:, 1]
             best_f1 = 0.0
             for thr in np.arange(0.1, 0.91, 0.01):
                 preds = (proba >= thr).astype(int)
-                f = float(f1_score(y, preds, zero_division=0))
+                f     = float(f1_score(y, preds, zero_division=0))
                 if f > best_f1:
-                    best_f1 = f; best_thr = round(float(thr), 2)
+                    best_f1  = f
+                    best_thr = round(float(thr), 2)
 
         result = {'params': clean, 'cv_score': best_cv, 'train_score': train_score, 'gap': gap}
         if best_thr is not None:
@@ -474,16 +486,15 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
     finally:
         _cleanup_jobs()
 
-
 @app.route('/api/tune/start', methods=['POST'])
 def api_tune_start():
     body = request.get_json(silent=True)
     if not body:
         return jsonify({'error': '요청 본문 없음'}), 400
-    sid = body.get('session_id')
-    model_name = body['model']
+    sid              = body.get('session_id')
+    model_name       = body['model']
     balance_strategy = body.get('balance', 'none')
-    cv_folds = int(body.get('cv_folds', 5))
+    cv_folds         = int(body.get('cv_folds', 5))
 
     job_id = str(uuid.uuid4())
     JOBS[job_id] = {'progress': 0, 'done': False, 'result': None, 'error': None}
@@ -492,22 +503,20 @@ def api_tune_start():
     t.start()
     return jsonify({'job_id': job_id})
 
-
 @app.route('/api/tune/status', methods=['GET'])
 def api_tune_status():
     job_id = request.args.get('job_id')
-    job = JOBS.get(job_id)
+    job    = JOBS.get(job_id)
     if not job:
         return jsonify({'error': '작업 없음'}), 404
     return jsonify(job)
-
 
 @app.route('/api/predict', methods=['POST'])
 def api_predict():
     body = request.get_json(silent=True)
     if not body:
         return jsonify({'error': '요청 본문 없음'}), 400
-    sid = body.get('session_id')
+    sid     = body.get('session_id')
     csv_str = body['csv']
 
     state = load_state(sid)
@@ -519,9 +528,10 @@ def api_predict():
         return jsonify({'error': '먼저 모델을 학습해주세요'}), 400
 
     feature_names = state['feature_names']
-    le = state['le']
-    encoders = state['encoders']
-    is_binary = state['is_binary']
+    le            = state['le']
+    encoders      = state['encoders']
+    is_binary     = state['is_binary']
+    threshold     = state.get('threshold', 0.5)  # 학습 시 저장된 threshold 사용
 
     try:
         df_n = pd.read_csv(io.StringIO(csv_str))
@@ -543,18 +553,21 @@ def api_predict():
             col = df_p[f].copy()
             if col.dtype == object:
                 col = pd.to_numeric(col, errors='coerce')
-                if col.isna().all():  # 완전 문자열 컬럼 → 0으로 채움
-                    col = pd.Series(0, index=df_p.index)
+            if col.isna().all():
+                col = pd.Series(0, index=df_p.index)
             X_df[f] = col
         X_n = X_df.fillna(0).values.astype(float)
 
-        raw_preds = model.predict(X_n)
+        if is_binary and hasattr(model, 'predict_proba'):
+            raw_preds = (model.predict_proba(X_n)[:, 1] >= threshold).astype(int)
+        else:
+            raw_preds = model.predict(X_n)
         preds = le.inverse_transform(raw_preds).tolist()
-        r = df_n.copy()
+        r         = df_n.copy()
         r['예측결과'] = preds
 
         if hasattr(model, 'predict_proba'):
-            proba = model.predict_proba(X_n)
+            proba   = model.predict_proba(X_n)
             classes = le.classes_.tolist()
             for i, cls in enumerate(classes):
                 r[f'P({cls})'] = np.round(proba[:, i], 4)
@@ -564,7 +577,6 @@ def api_predict():
         return Response(r.to_csv(index=False), mimetype='text/csv')
     except Exception as e:
         return jsonify({'error': str(e)}), 400
-
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
