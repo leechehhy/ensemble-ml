@@ -117,7 +117,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('step2NextBtn').addEventListener('click', goStep3);
   document.getElementById('step3BackBtn').addEventListener('click', () => setStep(2));
   document.getElementById('step3NextBtn').addEventListener('click', goStep4);
-  document.getElementById('step4BackBtn').addEventListener('click', goStep3);
+  document.getElementById('step4BackBtn').addEventListener('click', () => setStep(3));
 
   // 평가 / 튜닝
   document.getElementById('evalBtn').addEventListener('click', runEval);
