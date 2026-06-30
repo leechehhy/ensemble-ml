@@ -565,4 +565,13 @@ def api_predict():
             for i, cls in enumerate(classes):
                 r[f'P({cls})'] = np.round(proba[:, i], 4)
             if is_binary:
-                r['확률(양성)']
+                r['확률(양성)'] = [f'{v:.2f}%' for v in proba[:, 1] * 100]
+
+        return Response(r.to_csv(index=False), mimetype='text/csv')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
