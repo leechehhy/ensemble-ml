@@ -548,7 +548,13 @@ def api_predict():
             X_df[f] = col
         X_n = X_df.fillna(0).values.astype(float)
 
-        raw_preds = model.predict(X_n)
+        if is_binary and hasattr(model, 'predict_proba'):
+            proba_all = model.predict_proba(X_n)
+            raw_preds = (proba_all[:, 1] >= threshold).astype(int)
+        else:
+            proba_all = None
+            raw_preds = model.predict(X_n)
+            
         preds = le.inverse_transform(raw_preds).tolist()
         r = df_n.copy()
         r['예측결과'] = preds
@@ -559,13 +565,4 @@ def api_predict():
             for i, cls in enumerate(classes):
                 r[f'P({cls})'] = np.round(proba[:, i], 4)
             if is_binary:
-                r['확률(양성)'] = [f'{v:.2f}%' for v in proba[:, 1] * 100]
-
-        return Response(r.to_csv(index=False), mimetype='text/csv')
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
-
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+                r['확률(양성)']
