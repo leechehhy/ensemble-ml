@@ -32,13 +32,13 @@ def _cleanup_jobs():
 try:
     from xgboost import XGBClassifier as _XGB
     _xgb_ok = True
-except:
+except Exception:
     _xgb_ok = False
 
 try:
     from catboost import CatBoostClassifier as _CBC
     _catboost_ok = True
-except:
+except Exception:
     _catboost_ok = False
 
 # ─────────────────────────────────────────────
@@ -239,7 +239,7 @@ def api_load_data():
             'X': X, 'y': y, 'le': le, 'encoders': encoders,
             'feature_names': feature_names, 'target_name': target_col,
             'is_binary': is_binary, 'balance_strategy': balance_strategy,
-            'test_size': test_size, 'model': None
+            'test_size': test_size, 'model': None, 'threshold': 0.5
         }
         save_state(sid, state)
 
@@ -283,7 +283,7 @@ def api_evaluate_single():
         except TypeError:
             scores = cross_val_score(m, X, y, cv=cv, scoring='f1_weighted', error_score=0)
         return jsonify({'name': model_name, 'f1': float(scores.mean()), 'std': float(scores.std()), 'ok': True, 'cv_folds': cv_folds})
-    except Exception as e:
+    except Exception:
         try:
             m2 = _make_model_balanced(model_name, {}, strat)
             scores2 = cross_val_score(m2, X, y, cv=cv, scoring='f1_weighted', error_score=0)
@@ -338,7 +338,7 @@ def api_train_and_eval():
         if is_binary and hasattr(m, 'predict_proba'):
             try:
                 res['auc'] = float(roc_auc_score(y_te, m.predict_proba(X_te)[:, 1]))
-            except:
+            except Exception:
                 pass
         if is_binary:
             res['per_class'] = {
@@ -352,8 +352,10 @@ def api_train_and_eval():
             fi = sorted(zip(feature_names, m.feature_importances_.tolist()), key=lambda x: -x[1])[:10]
             res['feature_importance'] = fi
 
-        # Save trained model to state
+        # Save trained model + threshold to state (필요: predict 단계에서 동일 threshold 재사용)
         state['model'] = m
+        state['model_name'] = model_name
+        state['threshold'] = threshold
         save_state(sid, state)
 
         return jsonify(res)
@@ -403,7 +405,7 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
                 else:
                     sc = cross_val_score(m, X, y, cv=cv, scoring='f1_weighted', error_score=0)
                 s = float(sc.mean())
-            except:
+            except Exception:
                 s = 0.0
             if s > best_cv:
                 best_cv = s; best_params = dict(params)
@@ -437,7 +439,7 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
                     else:
                         sc2 = cross_val_score(m2, X, y, cv=cv, scoring='f1_weighted', error_score=0)
                     s2 = float(sc2.mean())
-                except:
+                except Exception:
                     s2 = 0.0
                 if s2 >= best_cv * 0.95 and s2 > best_cv - 0.05:
                     best_cv = max(best_cv, s2); best_params = dict(params2)
@@ -522,6 +524,7 @@ def api_predict():
     le = state['le']
     encoders = state['encoders']
     is_binary = state['is_binary']
+    threshold = float(state.get('threshold', 0.5))  # ★ 버그 수정: 누락되어 있던 threshold 로드
 
     try:
         df_n = pd.read_csv(io.StringIO(csv_str))
@@ -554,7 +557,7 @@ def api_predict():
         else:
             proba_all = None
             raw_preds = model.predict(X_n)
-            
+
         preds = le.inverse_transform(raw_preds).tolist()
         r = df_n.copy()
         r['예측결과'] = preds
