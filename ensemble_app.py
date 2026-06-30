@@ -120,7 +120,7 @@ def _make_model(name, params=None):
         kw = {k: v for k, v in p.items() if k in ['iterations','depth','learning_rate','l2_leaf_reg']}
         kw.setdefault('iterations', 100)
         return _CBC(**kw, random_state=42, verbose=0, thread_count=1, task_type='CPU')
-    raise ValueError f'Unknown model: {name}')
+    raise ValueError (f'Unknown model: {name}')
 
 CW_MODELS = {'Random Forest', 'Extra Trees', 'HistGBM (LightGBMê³ì´)', 'CatBoost'}
 CW_UNSUPPORTED = {'Gradient Boosting', 'AdaBoost', 'XGBoost'}
