@@ -89,6 +89,62 @@ window.addEventListener('DOMContentLoaded', () => {
   initPredUpload();
   initDragDrop();
 
+  // ── 이벤트 리스너 ────────────────────────────────────────────
+  // 테마
+  document.getElementById('themeToggle').addEventListener('click', toggleTheme);
+
+  // 업로드 존 클릭 → 파일 선택
+  document.getElementById('uploadZone').addEventListener('click', () =>
+    document.getElementById('fileInput').click());
+
+  // 피처 선택 버튼
+  document.getElementById('btnFeatAll').addEventListener('click', featSelectAll);
+  document.getElementById('btnFeatNone').addEventListener('click', featDeselectAll);
+  document.getElementById('btnFeatInvert').addEventListener('click', featInvert);
+
+  // 분할 슬라이더
+  document.getElementById('splitSlider').addEventListener('input', e =>
+    updateSplitLabel(e.target.value));
+
+  // CV 폴드 버튼
+  document.getElementById('cv3btn').addEventListener('click', function() { setCvFolds(3, this); });
+  document.getElementById('cv5btn').addEventListener('click', function() { setCvFolds(5, this); });
+  document.getElementById('cv10btn').addEventListener('click', function() { setCvFolds(10, this); });
+
+  // 스텝 이동
+  document.getElementById('step1NextBtn').addEventListener('click', goStep2);
+  document.getElementById('step2BackBtn').addEventListener('click', goStep1);
+  document.getElementById('step2NextBtn').addEventListener('click', goStep3);
+  document.getElementById('step3BackBtn').addEventListener('click', () => setStep(2));
+  document.getElementById('step3NextBtn').addEventListener('click', goStep4);
+  document.getElementById('step4BackBtn').addEventListener('click', goStep3);
+
+  // 평가 / 튜닝
+  document.getElementById('evalBtn').addEventListener('click', runEval);
+  document.getElementById('tuneBtn').addEventListener('click', autoTuneParams);
+
+  // 임계값 슬라이더
+  document.getElementById('thresholdSlider').addEventListener('input', e => {
+    threshold = parseFloat(e.target.value);
+    document.getElementById('thresholdVal').textContent = threshold.toFixed(2);
+    debounceEval();
+  });
+
+  // 데이터 탐색 패널
+  document.getElementById('corrToggleBtn').addEventListener('click', openCorrPanel);
+  document.getElementById('corrCloseBtn').addEventListener('click', closeCorrPanel);
+  document.getElementById('etab-corr').addEventListener('click', () => showExploreTab('corr'));
+  document.getElementById('etab-dist').addEventListener('click', () => showExploreTab('dist'));
+  document.getElementById('etab-target').addEventListener('click', () => showExploreTab('target'));
+
+  // 예측
+  document.getElementById('predZone').addEventListener('click', () =>
+    document.getElementById('predInput').click());
+  document.getElementById('predClearBtn').addEventListener('click', clearPredFile);
+  document.getElementById('predictBtn').addEventListener('click', runPredict);
+  document.getElementById('downloadBtn').addEventListener('click', downloadResults);
+  document.getElementById('resetPredBtn').addEventListener('click', resetPredict);
+
   // 로딩 화면 제거
   setTimeout(() => {
     document.getElementById('loader').style.opacity = '0';
@@ -313,8 +369,22 @@ function setCvFolds(n, btn) {
 
 // ── 클래스 분포 ──────────────────────────────────────────────
 function updateDistribution() {
-  // 미리보기 단계에서는 클라이언트 측으로 간단히 분포 표시
-  // 실제 분포는 서버 /api/load_data 응답 후 업데이트
+  if (!csvData || !targetCol) return;
+  const lines   = csvData.trim().split('\n');
+  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+  const tIdx    = headers.indexOf(targetCol);
+  if (tIdx < 0) return;
+
+  const counts = {};
+  lines.slice(1).forEach(line => {
+    if (!line.trim()) return;
+    const cells = line.split(',');
+    const val   = (cells[tIdx] || '').trim().replace(/^"|"$/g, '');
+    if (val) counts[val] = (counts[val] || 0) + 1;
+  });
+
+  if (Object.keys(counts).length === 0) return;
+  renderDistribution(counts, Object.keys(counts).length === 2);
 }
 
 function renderDistribution(classDist, isBinary) {
@@ -603,6 +673,10 @@ async function loadDataAndEval() {
   results.classList.add('hidden');
   progress.style.display = 'block';
   grid.innerHTML = '';
+
+  // 이전 로그 초기화
+  logItems = {};
+  document.getElementById('progLog').innerHTML = '';
 
   const scores = [];
   for (let i = 0; i < MODELS.length; i++) {
