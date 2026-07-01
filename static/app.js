@@ -16,6 +16,7 @@ let selectedModel = null;
 let bestParams   = {};
 let threshold    = 0.5;
 let predResultCsv = null;  // 다운로드용 예측 결과
+let previewRows  = [];     // 미리보기용 원본 행 (target 변경 시 재렌더링용)
 
 // ── 모델 정의 ───────────────────────────────────────────────
 const MODELS = [
@@ -89,7 +90,6 @@ window.addEventListener('DOMContentLoaded', () => {
   initPredUpload();
   initDragDrop();
 
-  // ── 이벤트 리스너 ────────────────────────────────────────────
   // 테마
   document.getElementById('themeToggle').addEventListener('click', toggleTheme);
 
@@ -97,7 +97,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('uploadZone').addEventListener('click', () =>
     document.getElementById('fileInput').click());
 
-  // 피처 선택 버튼
+  // 피처 선택 버튼 (전체선택/해제/반전 — 테이블 체크박스 조작)
   document.getElementById('btnFeatAll').addEventListener('click', featSelectAll);
   document.getElementById('btnFeatNone').addEventListener('click', featDeselectAll);
   document.getElementById('btnFeatInvert').addEventListener('click', featInvert);
@@ -117,7 +117,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('step2NextBtn').addEventListener('click', goStep3);
   document.getElementById('step3BackBtn').addEventListener('click', () => setStep(2));
   document.getElementById('step3NextBtn').addEventListener('click', goStep4);
-  document.getElementById('step4BackBtn').addEventListener('click', goStep3);
+  document.getElementById('step4BackBtn').addEventListener('click', () => setStep(3));
 
   // 평가 / 튜닝
   document.getElementById('evalBtn').addEventListener('click', runEval);
@@ -258,6 +258,7 @@ function parseAndPreview(csv, filename) {
   const lines = csv.trim().split('\n');
   const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g,''));
   allColumns = headers;
+  previewRows = lines.slice(1, 6);
 
   // 파일 정보 표시
   document.getElementById('fileInfoMsg').textContent =
@@ -267,76 +268,75 @@ function parseAndPreview(csv, filename) {
   // Target 선택 드롭다운
   const sel = document.getElementById('targetSelect');
   sel.innerHTML = headers.map(h => `<option value="${h}">${h}</option>`).join('');
-  // 기본값: 마지막 컬럼
   sel.value = headers[headers.length - 1];
-  sel.addEventListener('change', () => refreshFeatureChips(sel.value));
-
-  // 데이터 미리보기 테이블 (상위 5행)
-  renderPreviewTable(headers, lines.slice(1, 6));
+  sel.addEventListener('change', () => refreshFeatureSelection(sel.value));
 
   // 행/열 정보
   document.getElementById('infoRows').textContent = `${lines.length - 1}행`;
   document.getElementById('infoCols').textContent = `${headers.length}열`;
 
   document.getElementById('previewSection').classList.remove('hidden');
-  refreshFeatureChips(sel.value);
+
+  // target 설정 후 테이블 렌더링 (체크박스 포함)
+  targetCol = sel.value;
+  renderPreviewTable(headers, previewRows, targetCol);
+
+  updateFeatCount();
+  updateDistribution();
 }
 
-function renderPreviewTable(headers, rows) {
+// ── 데이터 미리보기 테이블 (헤더에 체크박스 포함) ───────────
+function renderPreviewTable(headers, rows, target) {
   const wrap = document.getElementById('previewTable');
-  let html = '<table><thead><tr>' + headers.map(h => `<th>${h}</th>`).join('') + '</tr></thead><tbody>';
+
+  // 헤더: target 열은 배지, 나머지는 체크박스
+  const thHtml = headers.map(h => {
+    if (h === target) {
+      return `<th>${h}<span class="target-badge"> (target)</span></th>`;
+    }
+    return `<th><label class="feat-th-label"><input type="checkbox" class="feat-col-cb" data-col="${h}" checked> ${h}</label></th>`;
+  }).join('');
+
+  let html = `<table><thead><tr>${thHtml}</tr></thead><tbody>`;
   rows.forEach(row => {
     const cells = row.split(',').map(c => c.trim().replace(/^"|"$/g,''));
     html += '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>';
   });
   html += '</tbody></table>';
   wrap.innerHTML = html;
+
+  // 체크박스 변경 시 카운트 업데이트
+  wrap.querySelectorAll('.feat-col-cb').forEach(cb => {
+    cb.addEventListener('change', updateFeatCount);
+  });
 }
 
-// ── 피처 칩 ─────────────────────────────────────────────────
-function refreshFeatureChips(target) {
+// ── 피처 선택 갱신 (target 변경 시 호출) ────────────────────
+function refreshFeatureSelection(target) {
   targetCol = target;
   document.getElementById('infoTarget').textContent = `Target: ${target}`;
-  const features = allColumns.filter(c => c !== target);
 
-  // 기존 chips 영역이 없으면 생성
-  let chipsWrap = document.getElementById('featChipsWrap');
-  if (!chipsWrap) {
-    chipsWrap = document.createElement('div');
-    chipsWrap.id = 'featChipsWrap';
-    chipsWrap.className = 'feat-chips';
-    chipsWrap.style.marginTop = '14px';
-    document.getElementById('previewSection').appendChild(chipsWrap);
-  }
+  // 현재 체크 상태 기억
+  const prevChecked = new Set(
+    [...document.querySelectorAll('.feat-col-cb:checked')].map(cb => cb.dataset.col)
+  );
 
-  chipsWrap.innerHTML = '';
-  // target 칩
-  const tc = document.createElement('span');
-  tc.className = 'feat-chip target-chip';
-  tc.textContent = target;
-  chipsWrap.appendChild(tc);
+  // 테이블 재렌더링
+  renderPreviewTable(allColumns, previewRows, target);
 
-  // 피처 칩
-  features.forEach(f => {
-    const chip = document.createElement('span');
-    chip.className = 'feat-chip on';
-    chip.dataset.feat = f;
-    chip.textContent = f;
-    chip.addEventListener('click', () => {
-      chip.classList.toggle('on');
-      chip.classList.toggle('off');
-      updateFeatCount();
-    });
-    chipsWrap.appendChild(chip);
+  // 이전 체크 상태 복원
+  document.querySelectorAll('.feat-col-cb').forEach(cb => {
+    cb.checked = prevChecked.size === 0 || prevChecked.has(cb.dataset.col);
   });
 
   updateFeatCount();
   updateDistribution();
 }
 
+// ── 피처 선택 읽기 ──────────────────────────────────────────
 function getSelectedFeatures() {
-  return [...document.querySelectorAll('.feat-chip[data-feat].on')]
-    .map(c => c.dataset.feat);
+  return [...document.querySelectorAll('.feat-col-cb:checked')]
+    .map(cb => cb.dataset.col);
 }
 
 function updateFeatCount() {
@@ -347,9 +347,19 @@ function updateFeatCount() {
   else         warn.classList.add('hidden');
 }
 
-function featSelectAll()   { document.querySelectorAll('.feat-chip[data-feat]').forEach(c => { c.classList.add('on'); c.classList.remove('off'); }); updateFeatCount(); }
-function featDeselectAll() { document.querySelectorAll('.feat-chip[data-feat]').forEach(c => { c.classList.remove('on'); c.classList.add('off'); }); updateFeatCount(); }
-function featInvert()      { document.querySelectorAll('.feat-chip[data-feat]').forEach(c => { c.classList.toggle('on'); c.classList.toggle('off'); }); updateFeatCount(); }
+// 전체선택 / 전체해제 / 반전
+function featSelectAll() {
+  document.querySelectorAll('.feat-col-cb').forEach(cb => cb.checked = true);
+  updateFeatCount();
+}
+function featDeselectAll() {
+  document.querySelectorAll('.feat-col-cb').forEach(cb => cb.checked = false);
+  updateFeatCount();
+}
+function featInvert() {
+  document.querySelectorAll('.feat-col-cb').forEach(cb => cb.checked = !cb.checked);
+  updateFeatCount();
+}
 
 // ── 훈련/테스트 분할 ─────────────────────────────────────────
 function updateSplitLabel(val) {
@@ -399,7 +409,6 @@ function renderDistribution(classDist, isBinary) {
   const ratio  = maxCnt / (minCnt || 1);
   const isImbalanced = ratio > 3;
 
-  // 불균형 태그
   const tag = document.getElementById('distImbalanceTag');
   if (isImbalanced) {
     tag.innerHTML = `<span style="background:var(--danger);color:#fff;font-size:10px;padding:2px 8px;border-radius:20px;">⚠ 불균형 (${ratio.toFixed(1)}:1)</span>`;
@@ -407,7 +416,6 @@ function renderDistribution(classDist, isBinary) {
     tag.innerHTML = `<span style="background:var(--success);color:#fff;font-size:10px;padding:2px 8px;border-radius:20px;">✅ 균형</span>`;
   }
 
-  // 분포 막대 차트
   const colors = ['#C86000','#16A34A','#7C3AED','#D97706','#0284C7','#DB2777'];
   chart.innerHTML = Object.entries(classDist).map(([cls, cnt], i) => {
     const pct = (cnt / total * 100).toFixed(1);
@@ -423,7 +431,6 @@ function renderDistribution(classDist, isBinary) {
     </div>`;
   }).join('');
 
-  // 불균형 처리 옵션
   const imbalBlock = document.getElementById('imbalanceBlock');
   if (isImbalanced) {
     imbalBlock.classList.remove('hidden');
@@ -492,7 +499,7 @@ function drawCorrHeatmap() {
   const feats = getSelectedFeatures().filter(f => {
     const idx = headers.indexOf(f);
     return idx >= 0 && rows.some(r => !isNaN(r[idx]));
-  }).slice(0, 12); // 최대 12개
+  }).slice(0, 12);
 
   if (feats.length < 2) { canvas.style.display='none'; document.getElementById('corrLegend').textContent='수치형 피처가 2개 이상 필요합니다.'; return; }
   canvas.style.display = 'block';
@@ -508,7 +515,6 @@ function drawCorrHeatmap() {
   const ctx     = canvas.getContext('2d');
   ctx.clearRect(0, 0, W, H);
 
-  // 상관계수 계산
   const vals = idxMap.map(idx => rows.map(r => r[idx]).filter(v => !isNaN(v)));
   const mean = v => v.reduce((a,b)=>a+b,0)/v.length;
   const std  = (v,m) => Math.sqrt(v.reduce((a,b)=>a+(b-m)**2,0)/v.length) || 1;
@@ -533,7 +539,6 @@ function drawCorrHeatmap() {
     ctx.fillText(isNaN(r)?'—':r.toFixed(2), pad+j*cell+cell/2, pad+i*cell+cell/2+4);
   }
 
-  // 라벨
   ctx.fillStyle  = isDark ? '#FFF0D8' : '#1C0800';
   ctx.textAlign  = 'right';
   ctx.font       = `${Math.max(9,cell/5)}px Segoe UI, sans-serif`;
@@ -604,12 +609,6 @@ function drawTargetChart() {
   }).slice(0, 8);
   if (feats.length === 0) return;
 
-  // 타깃별 평균 계산
-  const classes  = [...new Set(rows.map(r=>r[tIdx]))].filter(v=>!isNaN(v));
-  const clsStrs  = [...new Set(csvData.trim().split('\n').slice(1).map(l=>{
-    const cells=l.split(','); return cells[tIdx]?.trim().replace(/^"|"$/g,'');
-  }))].slice(0,6);
-
   canvas.width  = 600;
   canvas.height = 200;
   const ctx     = canvas.getContext('2d');
@@ -628,7 +627,6 @@ async function loadDataAndEval() {
   const features = getSelectedFeatures();
   const target   = document.getElementById('targetSelect').value;
 
-  // 1. 서버에 데이터 로드
   let loadResp;
   try {
     const r = await fetch('/api/load_data', {
@@ -655,7 +653,6 @@ async function loadDataAndEval() {
   SESSION_ID = loadResp.session_id;
   classInfo  = { isBinary: loadResp.is_binary, classDist: loadResp.class_dist };
 
-  // 전처리 리포트
   if (loadResp.prep_issues?.length > 0) {
     const rep = document.getElementById('prepReport');
     const iss = document.getElementById('prepIssues');
@@ -663,10 +660,8 @@ async function loadDataAndEval() {
     rep.classList.remove('hidden');
   }
 
-  // 클래스 분포
   renderDistribution(loadResp.class_dist, loadResp.is_binary);
 
-  // 2. 모델 순차 평가
   const results  = document.getElementById('step2Results');
   const progress = document.getElementById('evalProgress');
   const grid     = document.getElementById('modelGrid');
@@ -706,7 +701,6 @@ async function loadDataAndEval() {
   document.getElementById('progPct').textContent   = '100%';
   document.getElementById('progBar').style.width   = '100%';
 
-  // 결과 카드 렌더링
   const best = scores.reduce((a,b) => b.f1 > a.f1 ? b : a, scores[0]);
   selectedModel = best.model;
 
@@ -759,7 +753,7 @@ function updateProgLog(model, score, ok) {
   const item = logItems[model];
   if (!item) return;
   item.classList.remove('running');
-  item.classList.add(ok ? 'done' : 'done');
+  item.classList.add('done');
   const sc = item.querySelector('.log-score');
   sc.textContent = ok ? `${(score*100).toFixed(1)}%` : '오류';
   sc.style.color = ok ? 'var(--success)' : 'var(--danger)';
@@ -792,13 +786,11 @@ function buildParamControls(model) {
   bestParams     = {};
   grid.innerHTML = '';
 
-  // 모델 탭
   const tabs = document.getElementById('modelTabs');
   tabs.innerHTML = MODELS.map(m => `
     <button class="tab-btn${m===model?' active':''}" onclick="switchModel('${m}',this)">${MODEL_DESC[m]?.emoji||''} ${m}</button>
   `).join('');
 
-  // 파라미터 슬라이더
   configs.forEach(cfg => {
     bestParams[cfg.key] = cfg.def;
     const wrap = document.createElement('div');
@@ -811,7 +803,6 @@ function buildParamControls(model) {
     grid.appendChild(wrap);
   });
 
-  // 임계값 (이진분류)
   const thrCtrl = document.getElementById('thresholdControl');
   if (classInfo?.isBinary) {
     thrCtrl.classList.remove('hidden');
@@ -821,10 +812,7 @@ function buildParamControls(model) {
     thrCtrl.classList.add('hidden');
   }
 
-  // 모델 설명
   showModelDescStep3(model);
-
-  // 평가 결과 초기화
   resetMetrics();
   document.getElementById('step3NextBtn').disabled = true;
 }
@@ -911,7 +899,6 @@ function renderMetrics(d) {
     ${d.auc!=null?`<div class="metric-card"><div class="metric-val ${color(d.auc)}">${(d.auc*100).toFixed(1)}%</div><div class="metric-lbl">AUC-ROC</div></div>`:''}
   `;
 
-  // Confusion Matrix
   if (d.confusion_matrix) {
     const cm     = d.confusion_matrix;
     const cls    = d.classes || [];
@@ -931,7 +918,6 @@ function renderMetrics(d) {
     cmWrap.innerHTML = html;
   }
 
-  // 클래스별 지표 (이진분류)
   if (d.per_class) {
     const sec = document.getElementById('perClassSection');
     sec.classList.remove('hidden');
@@ -945,7 +931,6 @@ function renderMetrics(d) {
         </div>`).join('');
   }
 
-  // Feature Importance
   if (d.feature_importance?.length > 0) {
     const sec   = document.getElementById('fiSection');
     const chart = document.getElementById('fiChart');
@@ -966,7 +951,6 @@ async function autoTuneParams() {
   const btn = document.getElementById('tuneBtn');
   btn.disabled = true;
 
-  // 오버레이 표시
   const overlay = document.getElementById('tuneOverlay');
   overlay.classList.add('show');
   document.getElementById('tuneOvPct').textContent = '0%';
@@ -997,7 +981,6 @@ async function autoTuneParams() {
     return;
   }
 
-  // 진행 폴링
   const poll = setInterval(async () => {
     try {
       const r  = await fetch(`/api/tune/status?job_id=${jobId}`);
@@ -1016,11 +999,8 @@ async function autoTuneParams() {
         clearInterval(poll);
         overlay.classList.remove('show');
         btn.disabled = false;
-
         if (st.error) { alert('튜닝 오류: ' + st.error); return; }
-
-        const res = st.result;
-        applyTuneResult(res);
+        applyTuneResult(st.result);
       }
     } catch(e) {
       clearInterval(poll);
@@ -1034,7 +1014,6 @@ async function autoTuneParams() {
 function applyTuneResult(res) {
   if (!res?.params) return;
 
-  // 슬라이더 업데이트
   Object.entries(res.params).forEach(([k, v]) => {
     if (v == null) return;
     const slider = document.getElementById(`pslider-${k}`);
@@ -1047,7 +1026,6 @@ function applyTuneResult(res) {
     }
   });
 
-  // 임계값
   if (res.threshold != null) {
     threshold = res.threshold;
     const tSlider = document.getElementById('thresholdSlider');
@@ -1055,7 +1033,6 @@ function applyTuneResult(res) {
     if (tSlider) { tSlider.value = threshold; tVal.textContent = threshold.toFixed(2); }
   }
 
-  // 결과 패널
   const panel = document.getElementById('tuneResult');
   panel.classList.remove('hidden');
   panel.innerHTML = `
@@ -1071,7 +1048,6 @@ function applyTuneResult(res) {
     </div>
   `;
 
-  // 자동 평가
   runEval();
 }
 
@@ -1153,9 +1129,8 @@ async function runPredict() {
 function renderPredResults(csv) {
   const lines   = csv.trim().split('\n');
   const headers = lines[0].split(',').map(h=>h.trim().replace(/^"|"$/g,''));
-  const rows    = lines.slice(1, 6);  // 상위 5행 미리보기
+  const rows    = lines.slice(1, 6);
 
-  // 테이블
   let html = '<table><thead><tr>' + headers.map(h=>`<th>${h}</th>`).join('') + '</tr></thead><tbody>';
   rows.forEach(row => {
     const cells = row.split(',').map(c=>c.trim().replace(/^"|"$/g,''));
@@ -1168,7 +1143,6 @@ function renderPredResults(csv) {
   html += '</tbody></table>';
   document.getElementById('predTable').innerHTML = html;
 
-  // 요약
   const predCol = lines.slice(1).map(l => {
     const cells = l.split(',');
     const idx   = headers.indexOf('예측결과');
