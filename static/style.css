@@ -35,7 +35,6 @@ html.dark .alert-warning { background:rgba(245,158,11,.1) !important; border-col
 html.dark td { border-bottom:1px solid rgba(42,42,74,.4) !important; }
 html.dark tr:hover td { background:rgba(224,122,16,.05) !important; }
 html.dark select { background:var(--surface2); color:var(--text); }
-/* desc panels in dark mode */
 html.dark #modelDescPanel, html.dark #step3ModelDesc { color:var(--text) !important; }
 html.dark #modelDescPanel div[style*="color:#15803d"], html.dark #step3ModelDesc div[style*="color:#15803d"] { background:rgba(22,163,74,.10) !important; border-color:rgba(22,163,74,.2) !important; color:#6ee7b7 !important; }
 html.dark #modelDescPanel div[style*="color:#92400e"], html.dark #step3ModelDesc div[style*="color:#92400e"] { background:rgba(217,119,6,.10) !important; border-color:rgba(217,119,6,.2) !important; color:#fcd34d !important; }
@@ -70,8 +69,6 @@ header {
 header h1 { font-size:20px; font-weight:800; background:linear-gradient(135deg,#C86000,#7A5500); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; letter-spacing:-0.3px; }
 header .h-sub { color:var(--muted); font-size:12px; margin-top:1px; }
 
-
-
 /* ── Tune overlay ────────────────────────────────────────── */
 #tuneOverlay {
   display:none; position:fixed; inset:0; z-index:8000;
@@ -94,6 +91,7 @@ header .h-sub { color:var(--muted); font-size:12px; margin-top:1px; }
 .tune-ov-eta { font-size:12px; color:var(--muted); }
 .tune-ov-bar-wrap { width:240px; height:6px; background:var(--border); border-radius:3px; overflow:hidden; }
 .tune-ov-bar { height:100%; width:0%; background:linear-gradient(90deg,var(--primary),var(--secondary)); border-radius:3px; transition:width .35s ease; }
+
 /* ── Theme toggle ────────────────────────────────────────── */
 #themeToggle {
   margin-left:auto; padding:5px 13px; border-radius:20px;
@@ -102,6 +100,7 @@ header .h-sub { color:var(--muted); font-size:12px; margin-top:1px; }
   transition:all .2s; white-space:nowrap; flex-shrink:0;
 }
 #themeToggle:hover { border-color:var(--primary); color:var(--primary); }
+
 /* ── Step bar ────────────────────────────────────────────── */
 .steps-wrap { max-width:1200px; margin:0 auto; padding:22px 32px 0; }
 .steps { display:flex; align-items:center; margin-bottom:28px; }
@@ -180,14 +179,36 @@ select:focus { border-color:var(--primary); }
 .prog-sub { font-size:12px; color:var(--muted); }
 .prog-bar-wrap { height:8px; background:var(--border); border-radius:4px; overflow:hidden; margin-bottom:20px; }
 .prog-bar { height:100%; background:linear-gradient(90deg,var(--primary),var(--secondary)); border-radius:4px; transition:width .5s ease; }
-.prog-log { display:flex; flex-direction:column; gap:6px; }
-.log-item { display:flex; align-items:center; gap:10px; font-size:13px; padding:8px 12px; border-radius:8px; background:var(--surface2); }
-.log-item.done { border-left:3px solid var(--success); }
-.log-item.running { border-left:3px solid var(--primary); animation:pulse .8s infinite; }
-.log-item.pending { border-left:3px solid var(--border); opacity:.4; }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.6} }
-.log-score { margin-left:auto; font-weight:700; color:var(--success); }
-.log-time { color:var(--muted); font-size:11px; margin-left:6px; }
+.prog-log { display:flex; flex-direction:column; gap:5px; }
+
+/* ── Log items (모델 평가 목록) ──────────────────────────── */
+.log-item {
+  display:flex; align-items:center; gap:10px; font-size:13px;
+  padding:9px 13px; border-radius:8px; background:var(--surface2);
+  border-left:3px solid transparent; transition:all .3s;
+}
+.log-item.pending {
+  border-left-color:var(--border);
+  opacity:.4;
+}
+.log-item.running {
+  border-left-color:var(--primary);
+  opacity:1;
+}
+.log-item.done {
+  border-left-color:var(--success);
+  opacity:1;
+}
+.log-icon { font-size:15px; flex-shrink:0; width:22px; text-align:center; }
+.log-name { font-size:12px; font-weight:600; width:170px; flex-shrink:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.log-bar-wrap { flex:1; height:5px; background:var(--border); border-radius:3px; overflow:hidden; }
+.log-bar { height:100%; width:0%; background:linear-gradient(90deg,var(--primary),var(--secondary)); border-radius:3px; transition:width .4s ease; }
+.log-item.running .log-bar { animation:logBarSweep 1.4s ease-in-out infinite; }
+.log-item.done .log-bar { width:100%; animation:none; }
+@keyframes logBarSweep { 0%{width:10%} 50%{width:80%} 100%{width:10%} }
+.log-status { font-size:11px; color:var(--muted); width:55px; text-align:right; flex-shrink:0; }
+.log-score { font-size:12px; font-weight:700; width:46px; text-align:right; flex-shrink:0; }
+
 .eta { font-size:12px; color:var(--warning); margin-top:8px; text-align:center; }
 
 /* ── Param sliders ───────────────────────────────────────── */
@@ -281,23 +302,66 @@ select:focus { border-color:var(--primary); }
 }
 .feat-chip.target-chip::before { content:'🎯 '; }
 .feat-warn { font-size:11px; color:var(--danger); margin-top:8px; }
+
+/* ── 테이블 헤더 체크박스 (피처 선택) ───────────────────── */
 .feat-th-label {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   cursor: pointer;
   white-space: nowrap;
+  font-weight: 600;
+  color: var(--muted);
+  user-select: none;
 }
+.feat-th-label:hover { color: var(--primary); }
+
+/* 커스텀 체크박스 — 브라우저 기본 숨기고 직접 그리기 */
 .feat-col-cb {
+  appearance: none;
+  -webkit-appearance: none;
   width: 15px;
   height: 15px;
+  border: 2px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
   cursor: pointer;
-  accent-color: var(--accent);
+  flex-shrink: 0;
+  position: relative;
+  transition: border-color .15s, background .15s;
+  vertical-align: middle;
 }
+.feat-col-cb:hover {
+  border-color: var(--primary);
+}
+.feat-col-cb:checked {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+.feat-col-cb:checked::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0px;
+  width: 5px;
+  height: 9px;
+  border: 2px solid #fff;
+  border-top: none;
+  border-left: none;
+  transform: rotate(45deg);
+}
+
+/* target 열 배지 */
 .target-badge {
-  font-size: 11px;
-  color: var(--accent);
-  font-weight: 400;
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--primary);
+  background: rgba(200, 96, 0, 0.10);
+  border: 1px solid rgba(200, 96, 0, 0.25);
+  padding: 1px 7px;
+  border-radius: 10px;
+  margin-left: 4px;
 }
 
 /* ── Class Distribution & Imbalance ─────────────────────── */
@@ -339,3 +403,19 @@ select:focus { border-color:var(--primary); }
 .balance-opt-name { font-size:12px; font-weight:700; margin-bottom:2px; display:flex; align-items:center; gap:5px; }
 .balance-opt-name .rec-tag { font-size:9px; background:var(--warning); color:#000; padding:1px 5px; border-radius:10px; }
 .balance-opt-desc { font-size:11px; color:var(--muted); line-height:1.4; }
+
+/* ── 라이티 캐릭터 ─────────────────────── */
+.laity-float {
+  display: block;
+  width: 130px;
+  margin: 0 auto 8px;
+  animation: laityBob 2.2s ease-in-out infinite;
+  filter: drop-shadow(0 10px 18px rgba(200, 96, 0, 0.18));
+  pointer-events: none;
+  user-select: none;
+}
+
+@keyframes laityBob {
+  0%,100% { transform: translateY(0px) rotate(-1deg); }
+  50%      { transform: translateY(-14px) rotate(1deg); }
+}
