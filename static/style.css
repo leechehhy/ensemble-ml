@@ -403,3 +403,19 @@ select:focus { border-color:var(--primary); }
 .balance-opt-name { font-size:12px; font-weight:700; margin-bottom:2px; display:flex; align-items:center; gap:5px; }
 .balance-opt-name .rec-tag { font-size:9px; background:var(--warning); color:#000; padding:1px 5px; border-radius:10px; }
 .balance-opt-desc { font-size:11px; color:var(--muted); line-height:1.4; }
+
+/* ── 라이티 캐릭터 ─────────────────────── */
+.laity-float {
+  display: block;
+  width: 130px;
+  margin: 0 auto 8px;
+  animation: laityBob 2.2s ease-in-out infinite;
+  filter: drop-shadow(0 10px 18px rgba(200, 96, 0, 0.18));
+  pointer-events: none;
+  user-select: none;
+}
+
+@keyframes laityBob {
+  0%,100% { transform: translateY(0px) rotate(-1deg); }
+  50%      { transform: translateY(-14px) rotate(1deg); }
+}
