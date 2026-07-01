@@ -85,6 +85,12 @@ const PARAM_CONFIG = {
 
 // ── 초기화 ──────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
+  // 페이지 새로고침 후 세션 복원
+  const _sid = sessionStorage.getItem('SESSION_ID');
+  const _mdl = sessionStorage.getItem('selectedModel');
+  if (_sid) SESSION_ID    = _sid;
+  if (_mdl) selectedModel = _mdl;
+
   initTheme();
   initFileUpload();
   initPredUpload();
@@ -145,6 +151,17 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('downloadBtn').addEventListener('click', downloadResults);
   document.getElementById('resetPredBtn').addEventListener('click', resetPredict);
 
+  // 라이티 캐릭터를 #loader에 삽입
+  const loaderEl = document.getElementById('loader');
+  if (loaderEl && !document.getElementById('laityChar')) {
+    const laityImg = document.createElement('img');
+    laityImg.id        = 'laityChar';
+    laityImg.src       = '/static/laity.png';
+    laityImg.alt       = 'Laity';
+    laityImg.className = 'laity-float';
+    loaderEl.insertBefore(laityImg, loaderEl.firstChild);
+  }
+
   // 로딩 화면 제거
   setTimeout(() => {
     document.getElementById('loader').style.opacity = '0';
@@ -187,7 +204,9 @@ function setStep(n) {
   });
 }
 
-function goStep1() { setStep(1); }
+function goStep1() {
+  sessionStorage.removeItem('SESSION_ID');
+  sessionStorage.removeItem('selectedModel'); setStep(1); }
 function goStep2() {
   if (!validateStep1()) return;
   setStep(2);
@@ -651,6 +670,7 @@ async function loadDataAndEval() {
   if (loadResp.error) { alert('오류: ' + loadResp.error); goStep1(); return; }
 
   SESSION_ID = loadResp.session_id;
+  sessionStorage.setItem('SESSION_ID', SESSION_ID);
   classInfo  = { isBinary: loadResp.is_binary, classDist: loadResp.class_dist };
 
   if (loadResp.prep_issues?.length > 0) {
@@ -669,15 +689,6 @@ async function loadDataAndEval() {
   progress.style.display = 'block';
   grid.innerHTML = '';
 
-  // 라이티 캐릭터 (없으면 삽입)
-  if (!document.getElementById('laityChar')) {
-    const img = document.createElement('img');
-    img.id  = 'laityChar';
-    img.src = '/static/laity.png';
-    img.alt = 'Laity';
-    img.className = 'laity-float';
-    progress.insertBefore(img, progress.firstChild);
-  }
 
   // 이전 로그 초기화
   logItems = {};
@@ -716,6 +727,7 @@ async function loadDataAndEval() {
 
   const best = scores.reduce((a,b) => b.f1 > a.f1 ? b : a, scores[0]);
   selectedModel = best.model;
+  sessionStorage.setItem('selectedModel', selectedModel);
 
   scores.sort((a,b)=>b.f1-a.f1).forEach(s => {
     const isRec  = s.model === best.model;
@@ -776,6 +788,15 @@ function setProgLogRunning(model) {
   item.classList.remove('pending');
   item.classList.add('running');
   item.querySelector('.log-status').textContent = '평가 중...';
+
+  // 진행 바: 0% → 85% 천천히 채움
+  const bar = item.querySelector('.log-bar');
+  bar.style.transition = 'none';
+  bar.style.width = '0%';
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    bar.style.transition = 'width 6s cubic-bezier(0.1, 0.4, 0.6, 1)';
+    bar.style.width = '85%';
+  }));
 }
 
 function updateProgLog(model, score, ok) {
@@ -784,6 +805,12 @@ function updateProgLog(model, score, ok) {
   item.classList.remove('running', 'pending');
   item.classList.add('done');
   item.querySelector('.log-status').textContent = ok ? '완료' : '오류';
+
+  // 바를 100%로 빠르게 채움
+  const bar = item.querySelector('.log-bar');
+  bar.style.transition = 'width 0.35s ease';
+  bar.style.width = ok ? '100%' : '0%';
+
   const sc = item.querySelector('.log-score');
   sc.textContent = ok ? `${(score*100).toFixed(1)}%` : '—';
   sc.style.color = ok ? 'var(--success)' : 'var(--danger)';
