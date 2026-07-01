@@ -669,6 +669,16 @@ async function loadDataAndEval() {
   progress.style.display = 'block';
   grid.innerHTML = '';
 
+  // 라이티 캐릭터 (없으면 삽입)
+  if (!document.getElementById('laityChar')) {
+    const img = document.createElement('img');
+    img.id  = 'laityChar';
+    img.src = '/static/laity.png';
+    img.alt = 'Laity';
+    img.className = 'laity-float';
+    progress.insertBefore(img, progress.firstChild);
+  }
+
   // 이전 로그 초기화
   logItems = {};
   document.getElementById('progLog').innerHTML = '';
@@ -879,7 +889,11 @@ function debounceEval() {
 
 // ── 평가 실행 ────────────────────────────────────────────────
 async function runEval() {
-  if (!SESSION_ID || !selectedModel) return;
+  if (!SESSION_ID || !selectedModel) {
+    alert('⚠️ 세션 정보가 없습니다.\n데이터를 다시 업로드하고 모델 추천 단계를 진행해 주세요.');
+    goStep1();
+    return;
+  }
   const btn = document.getElementById('evalBtn');
   btn.disabled    = true;
   btn.textContent = '평가 중...';
@@ -897,12 +911,30 @@ async function runEval() {
         threshold,
       })
     });
-    const d = await r.json();
-    if (d.error) { alert('평가 오류: ' + d.error); return; }
+
+    // 서버가 JSON이 아닌 오류 페이지를 반환하는 경우 대비
+    const text = await r.text();
+    let d;
+    try { d = JSON.parse(text); } catch(_) {
+      alert('서버 응답 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.');
+      return;
+    }
+
+    if (d.error) {
+      if (d.error.includes('세션')) {
+        alert('⚠️ 서버 세션이 초기화되었습니다.\n데이터를 다시 업로드해 주세요.');
+        SESSION_ID = null;
+        selectedModel = null;
+        goStep1();
+      } else {
+        alert('평가 오류: ' + d.error);
+      }
+      return;
+    }
     renderMetrics(d);
     document.getElementById('step3NextBtn').disabled = false;
   } catch(e) {
-    alert('오류: ' + e.message);
+    alert('네트워크 오류: ' + e.message);
   } finally {
     btn.disabled    = false;
     btn.textContent = '📈 성능 평가 실행';
@@ -967,7 +999,11 @@ function renderMetrics(d) {
 
 // ── 파라미터 자동 튜닝 ───────────────────────────────────────
 async function autoTuneParams() {
-  if (!SESSION_ID || !selectedModel) return;
+  if (!SESSION_ID || !selectedModel) {
+    alert('⚠️ 세션 정보가 없습니다.\n데이터를 다시 업로드하고 모델 추천 단계를 진행해 주세요.');
+    goStep1();
+    return;
+  }
   const btn = document.getElementById('tuneBtn');
   btn.disabled = true;
 
