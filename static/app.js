@@ -120,6 +120,7 @@ window.addEventListener('DOMContentLoaded', () => {
   // 스텝 이동
   document.getElementById('step1NextBtn').addEventListener('click', goStep2);
   document.getElementById('step2BackBtn').addEventListener('click', goStep1);
+  document.getElementById('step2NextBtn').disabled = true;   // 평가 완료 전까지 비활성
   document.getElementById('step2NextBtn').addEventListener('click', goStep3);
   document.getElementById('step3BackBtn').addEventListener('click', () => setStep(2));
   document.getElementById('step3NextBtn').addEventListener('click', goStep4);
@@ -212,7 +213,14 @@ function goStep2() {
   setStep(2);
   loadDataAndEval();
 }
-function goStep3() { setStep(3); buildParamControls(selectedModel); }
+function goStep3() {
+  if (!SESSION_ID) {
+    alert('모델 평가가 완료되지 않았습니다.\n파일을 업로드하고 모델 추천 단계를 먼저 실행해 주세요.');
+    return;
+  }
+  setStep(3);
+  buildParamControls(selectedModel);
+}
 function goStep4() { setStep(4); }
 
 // ── STEP 1 유효성 검사 ───────────────────────────────────────
@@ -273,6 +281,44 @@ function handleFile(file) {
   else               reader.readAsBinaryString(file);
 }
 
+// ── 타겟 열 자동 추정 ────────────────────────────────────────
+function guessTargetColumn(headers, dataLines) {
+  const lower = headers.map(h => h.toLowerCase().trim());
+
+  // 1순위: 정확히 "target"인 열
+  const exactIdx = lower.indexOf('target');
+  if (exactIdx >= 0) return headers[exactIdx];
+
+  // 2순위: 흔한 타겟 열 이름
+  const targetNames = ['label', 'class', 'y', 'output', 'outcome',
+                       'result', 'status', 'answer', 'response',
+                       'dependent', 'churn', '결과', '타겟', '레이블'];
+  for (const name of targetNames) {
+    const idx = lower.indexOf(name);
+    if (idx >= 0) return headers[idx];
+  }
+
+  // 3순위: 이름에 target/label/class가 포함된 열
+  const partialIdx = lower.findIndex(h =>
+    ['target','label','class','output','result','status'].some(k => h.includes(k))
+  );
+  if (partialIdx >= 0) return headers[partialIdx];
+
+  // 4순위: 고유값이 2~10개인 열 (분류 타겟 가능성 높음), 마지막 열부터 탐색
+  if (dataLines.length > 0) {
+    for (let i = headers.length - 1; i >= 0; i--) {
+      const vals = new Set(dataLines.map(l => {
+        const cells = l.split(',');
+        return (cells[i] || '').trim().replace(/^"|"$/g, '');
+      }).filter(Boolean));
+      if (vals.size >= 2 && vals.size <= 10) return headers[i];
+    }
+  }
+
+  // 5순위: 마지막 열 (기본값)
+  return headers[headers.length - 1];
+}
+
 function parseAndPreview(csv, filename) {
   const lines = csv.trim().split('\n');
   const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g,''));
@@ -287,7 +333,7 @@ function parseAndPreview(csv, filename) {
   // Target 선택 드롭다운
   const sel = document.getElementById('targetSelect');
   sel.innerHTML = headers.map(h => `<option value="${h}">${h}</option>`).join('');
-  sel.value = headers[headers.length - 1];
+  sel.value = guessTargetColumn(headers, lines.slice(1));
   sel.addEventListener('change', () => refreshFeatureSelection(sel.value));
 
   // 행/열 정보
@@ -657,7 +703,7 @@ async function loadDataAndEval() {
         features,
         balance,
         test_size: testSize,
-        session_id: SESSION_ID,
+        ...(SESSION_ID ? { session_id: SESSION_ID } : {}),
       })
     });
     loadResp = await r.json();
@@ -671,6 +717,7 @@ async function loadDataAndEval() {
 
   SESSION_ID = loadResp.session_id;
   sessionStorage.setItem('SESSION_ID', SESSION_ID);
+  console.log('[loadDataAndEval] SESSION_ID 설정됨:', SESSION_ID);
   classInfo  = { isBinary: loadResp.is_binary, classDist: loadResp.class_dist };
 
   if (loadResp.prep_issues?.length > 0) {
@@ -728,6 +775,7 @@ async function loadDataAndEval() {
   const best = scores.reduce((a,b) => b.f1 > a.f1 ? b : a, scores[0]);
   selectedModel = best.model;
   sessionStorage.setItem('selectedModel', selectedModel);
+  console.log('[loadDataAndEval] selectedModel 설정됨:', selectedModel);
 
   scores.sort((a,b)=>b.f1-a.f1).forEach(s => {
     const isRec  = s.model === best.model;
@@ -760,6 +808,7 @@ async function loadDataAndEval() {
   setTimeout(() => {
     progress.style.display = 'none';
     results.classList.remove('hidden');
+    document.getElementById('step2NextBtn').disabled = false;  // 평가 완료 후 활성화
   }, 300);
 }
 
@@ -916,8 +965,10 @@ function debounceEval() {
 
 // ── 평가 실행 ────────────────────────────────────────────────
 async function runEval() {
+  console.log('[runEval] SESSION_ID:', SESSION_ID, '/ selectedModel:', selectedModel);
   if (!SESSION_ID || !selectedModel) {
-    alert('⚠️ 세션 정보가 없습니다.\n데이터를 다시 업로드하고 모델 추천 단계를 진행해 주세요.');
+    const miss = !SESSION_ID ? 'SESSION_ID' : 'selectedModel';
+    alert(`⚠️ 세션 정보가 없습니다 (${miss} 누락).\n데이터를 다시 업로드하고 모델 추천 단계를 진행해 주세요.`);
     goStep1();
     return;
   }
@@ -1026,8 +1077,10 @@ function renderMetrics(d) {
 
 // ── 파라미터 자동 튜닝 ───────────────────────────────────────
 async function autoTuneParams() {
+  console.log('[autoTuneParams] SESSION_ID:', SESSION_ID, '/ selectedModel:', selectedModel);
   if (!SESSION_ID || !selectedModel) {
-    alert('⚠️ 세션 정보가 없습니다.\n데이터를 다시 업로드하고 모델 추천 단계를 진행해 주세요.');
+    const miss = !SESSION_ID ? 'SESSION_ID' : 'selectedModel';
+    alert(`⚠️ 세션 정보가 없습니다 (${miss} 누락).\n데이터를 다시 업로드하고 모델 추천 단계를 진행해 주세요.`);
     goStep1();
     return;
   }
@@ -1035,6 +1088,16 @@ async function autoTuneParams() {
   btn.disabled = true;
 
   const overlay = document.getElementById('tuneOverlay');
+
+  // 라이티 캐릭터 삽입 (없으면)
+  if (!overlay.querySelector('.laity-float')) {
+    const laityImg = document.createElement('img');
+    laityImg.src       = '/static/laity.png';
+    laityImg.alt       = 'Laity';
+    laityImg.className = 'laity-float';
+    overlay.insertBefore(laityImg, overlay.firstChild);
+  }
+
   overlay.classList.add('show');
   document.getElementById('tuneOvPct').textContent = '0%';
   document.getElementById('tuneOvBar').style.width  = '0%';
