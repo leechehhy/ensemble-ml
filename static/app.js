@@ -673,6 +673,9 @@ async function loadDataAndEval() {
   logItems = {};
   document.getElementById('progLog').innerHTML = '';
 
+  // 전체 모델을 대기 상태로 미리 렌더링
+  MODELS.forEach((m, i) => addProgLog(m, 'pending', i));
+
   const scores = [];
   for (let i = 0; i < MODELS.length; i++) {
     const model = MODELS[i];
@@ -680,7 +683,7 @@ async function loadDataAndEval() {
     document.getElementById('progTitle').textContent = `평가 중: ${model}`;
     document.getElementById('progPct').textContent   = `${pct}%`;
     document.getElementById('progBar').style.width   = `${pct}%`;
-    addProgLog(model, 'running', i);
+    setProgLogRunning(model);
 
     try {
       const r = await fetch('/api/evaluate_single', {
@@ -739,23 +742,40 @@ async function loadDataAndEval() {
 }
 
 let logItems = {};
+
 function addProgLog(model, state, idx) {
   const log  = document.getElementById('progLog');
   const item = document.createElement('div');
-  item.className  = `log-item ${state}`;
-  item.id         = `log-${model.replace(/\s/g,'_')}`;
-  item.innerHTML  = `<span>${MODEL_DESC[model]?.emoji||'🤖'} ${model}</span><span class="log-score"></span>`;
+  item.className = `log-item ${state}`;
+  item.id        = `log-${model.replace(/\s/g,'_')}`;
+  const statusText = state === 'pending' ? '대기 중' : '평가 중...';
+  item.innerHTML = `
+    <span class="log-icon">${MODEL_DESC[model]?.emoji||'🤖'}</span>
+    <span class="log-name">${model}</span>
+    <div class="log-bar-wrap"><div class="log-bar"></div></div>
+    <span class="log-status">${statusText}</span>
+    <span class="log-score"></span>
+  `;
   log.appendChild(item);
   logItems[model] = item;
+}
+
+function setProgLogRunning(model) {
+  const item = logItems[model];
+  if (!item) return;
+  item.classList.remove('pending');
+  item.classList.add('running');
+  item.querySelector('.log-status').textContent = '평가 중...';
 }
 
 function updateProgLog(model, score, ok) {
   const item = logItems[model];
   if (!item) return;
-  item.classList.remove('running');
+  item.classList.remove('running', 'pending');
   item.classList.add('done');
+  item.querySelector('.log-status').textContent = ok ? '완료' : '오류';
   const sc = item.querySelector('.log-score');
-  sc.textContent = ok ? `${(score*100).toFixed(1)}%` : '오류';
+  sc.textContent = ok ? `${(score*100).toFixed(1)}%` : '—';
   sc.style.color = ok ? 'var(--success)' : 'var(--danger)';
 }
 
