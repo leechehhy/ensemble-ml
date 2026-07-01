@@ -85,6 +85,12 @@ const PARAM_CONFIG = {
 
 // ── 초기화 ──────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
+  // 페이지 새로고침 후 세션 복원
+  const _sid = sessionStorage.getItem('SESSION_ID');
+  const _mdl = sessionStorage.getItem('selectedModel');
+  if (_sid) SESSION_ID    = _sid;
+  if (_mdl) selectedModel = _mdl;
+
   initTheme();
   initFileUpload();
   initPredUpload();
@@ -187,7 +193,9 @@ function setStep(n) {
   });
 }
 
-function goStep1() { setStep(1); }
+function goStep1() {
+  sessionStorage.removeItem('SESSION_ID');
+  sessionStorage.removeItem('selectedModel'); setStep(1); }
 function goStep2() {
   if (!validateStep1()) return;
   setStep(2);
@@ -651,6 +659,7 @@ async function loadDataAndEval() {
   if (loadResp.error) { alert('오류: ' + loadResp.error); goStep1(); return; }
 
   SESSION_ID = loadResp.session_id;
+  sessionStorage.setItem('SESSION_ID', SESSION_ID);
   classInfo  = { isBinary: loadResp.is_binary, classDist: loadResp.class_dist };
 
   if (loadResp.prep_issues?.length > 0) {
@@ -716,6 +725,7 @@ async function loadDataAndEval() {
 
   const best = scores.reduce((a,b) => b.f1 > a.f1 ? b : a, scores[0]);
   selectedModel = best.model;
+  sessionStorage.setItem('selectedModel', selectedModel);
 
   scores.sort((a,b)=>b.f1-a.f1).forEach(s => {
     const isRec  = s.model === best.model;
