@@ -237,9 +237,7 @@ function goStep2() {
   loadDataAndEval();
 }
 function goStep3() {
- error_refactoring
   if (!SESSION_ID || !selectedModel) {
-main
     alert('모델 평가가 완료되지 않았습니다.\n파일을 업로드하고 모델 추천 단계를 먼저 실행해 주세요.');
     return;
   }
@@ -359,9 +357,7 @@ function parseAndPreview(csv, filename) {
   const sel = document.getElementById('targetSelect');
   sel.innerHTML = headers.map(h => `<option value="${h}">${h}</option>`).join('');
   sel.value = guessTargetColumn(headers, lines.slice(1));
- error_refactoring
   sel.onchange = () => refreshFeatureSelection(sel.value);
- main
 
   // 행/열 정보
   document.getElementById('infoRows').textContent = `${lines.length - 1}행`;
@@ -1370,4 +1366,3 @@ function downloadResults() {
   a.click();
   URL.revokeObjectURL(url);
 }
-
