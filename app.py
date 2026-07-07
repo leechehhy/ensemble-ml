@@ -345,6 +345,35 @@ def api_load_data():
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 
+def _evaluate_one_model(state, model_name, cv_folds):
+    """단일 모델 교차검증 평가. evaluate_single(동기)과 evaluate/start(백그라운드)가 공유."""
+    X, y = state['X'], state['y']
+    balance_strategy = state['balance_strategy']
+    cv   = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+
+    resample    = balance_strategy if balance_strategy in ('oversample', 'undersample') else None
+    strat_model = 'balanced' if balance_strategy == 'balanced' else 'none'
+    use_sw = strat_model == 'balanced' and model_name in CW_UNSUPPORTED
+    sw     = _compute_sample_weight(y) if use_sw else None
+
+    try:
+        scores = _cross_val_f1(
+            lambda: _make_model_balanced(model_name, {}, strat_model),
+            X, y, cv, sample_weight=sw, resample_strategy=resample
+        )
+        return {'name': model_name, 'f1': float(scores.mean()), 'std': float(scores.std()), 'ok': True, 'cv_folds': cv_folds}
+    except Exception as e:
+        if sw is None:
+            return {'name': model_name, 'f1': 0.0, 'std': 0.0, 'ok': False, 'err': str(e)}
+        try:
+            scores2 = _cross_val_f1(
+                lambda: _make_model_balanced(model_name, {}, strat_model),
+                X, y, cv, resample_strategy=resample
+            )
+            return {'name': model_name, 'f1': float(scores2.mean()), 'std': float(scores2.std()), 'ok': True, 'cv_folds': cv_folds}
+        except Exception as e2:
+            return {'name': model_name, 'f1': 0.0, 'std': 0.0, 'ok': False, 'err': str(e2)}
+
 @app.route('/api/evaluate_single', methods=['POST'])
 def api_evaluate_single():
     body = request.get_json(silent=True)
@@ -360,34 +389,64 @@ def api_evaluate_single():
     if not state:
         return jsonify({'ok': False, 'err': '세션 없음'}), 400
 
-    X, y = state['X'], state['y']
-    balance_strategy = state['balance_strategy']
-    cv   = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+    return jsonify(_evaluate_one_model(state, model_name, cv_folds))
 
-    # oversample/undersample은 폴드별 리샘플링으로 처리 (train_and_eval과 동일 방식)
-    resample    = balance_strategy if balance_strategy in ('oversample', 'undersample') else None
-    strat_model = 'balanced' if balance_strategy == 'balanced' else 'none'
-    use_sw = strat_model == 'balanced' and model_name in CW_UNSUPPORTED
-    sw     = _compute_sample_weight(y) if use_sw else None
+MODEL_LIST = ['Random Forest', 'Gradient Boosting', 'Extra Trees', 'AdaBoost',
+              'XGBoost', 'HistGBM (LightGBM계열)', 'CatBoost']
 
+def _run_evaluate_all(job_id, sid, cv_folds):
+    """전 모델 순차 평가를 백그라운드 스레드에서 실행.
+    HTTP 요청-응답 안에서 느린 모델(RF/GB/ET/AdaBoost)까지 다 기다리면
+    프록시/게이트웨이(Render 등)의 타임아웃(보통 30~60초)에 걸려 500이 나므로,
+    튜닝(/api/tune/*)과 동일하게 job 방식으로 분리해 타임아웃 설정과 무관하게 만든다."""
+    state = load_state(sid)
+    if not state:
+        save_job(job_id, {'progress': 0, 'done': True, 'error': '세션 없음', 'results': []})
+        return
+
+    job = {'progress': 0, 'done': False, 'error': None, 'results': []}
+    save_job(job_id, job)
     try:
-        scores = _cross_val_f1(
-            lambda: _make_model_balanced(model_name, {}, strat_model),
-            X, y, cv, sample_weight=sw, resample_strategy=resample
-        )
-        return jsonify({'name': model_name, 'f1': float(scores.mean()), 'std': float(scores.std()), 'ok': True, 'cv_folds': cv_folds})
+        for i, model_name in enumerate(MODEL_LIST):
+            job['current'] = model_name
+            save_job(job_id, job)
+            r = _evaluate_one_model(state, model_name, cv_folds)
+            job['results'].append(r)
+            job['progress'] = int((i + 1) / len(MODEL_LIST) * 100)
+            save_job(job_id, job)
+        job['done'] = True
+        job['current'] = None
+        save_job(job_id, job)
     except Exception as e:
-        # sample_weight 사용 시에만 미사용으로 재시도 (sw=None이면 동일 계산 반복일 뿐)
-        if sw is None:
-            return jsonify({'name': model_name, 'f1': 0.0, 'std': 0.0, 'ok': False, 'err': str(e)})
-        try:
-            scores2 = _cross_val_f1(
-                lambda: _make_model_balanced(model_name, {}, strat_model),
-                X, y, cv, resample_strategy=resample
-            )
-            return jsonify({'name': model_name, 'f1': float(scores2.mean()), 'std': float(scores2.std()), 'ok': True, 'cv_folds': cv_folds})
-        except Exception as e2:
-            return jsonify({'name': model_name, 'f1': 0.0, 'std': 0.0, 'ok': False, 'err': str(e2)})
+        job['done'] = True
+        job['error'] = str(e)
+        save_job(job_id, job)
+    finally:
+        _cleanup_dir(JOBS_DIR)
+
+@app.route('/api/evaluate/start', methods=['POST'])
+def api_evaluate_start():
+    body = request.get_json(silent=True)
+    if not body:
+        return jsonify({'error': '요청 본문 없음'}), 400
+    sid      = body.get('session_id')
+    cv_folds = int(body.get('cv_folds', 5))
+    if not load_state(sid):
+        return jsonify({'error': '세션 없음'}), 400
+
+    job_id = str(uuid.uuid4())
+    save_job(job_id, {'progress': 0, 'done': False, 'error': None, 'results': []})
+    t = threading.Thread(target=_run_evaluate_all, args=(job_id, sid, cv_folds), daemon=True)
+    t.start()
+    return jsonify({'job_id': job_id})
+
+@app.route('/api/evaluate/status', methods=['GET'])
+def api_evaluate_status():
+    job_id = request.args.get('job_id')
+    job    = load_job(job_id) if job_id else None
+    if not job:
+        return jsonify({'error': '작업 없음'}), 404
+    return jsonify(job)
 
 @app.route('/api/train_and_eval', methods=['POST'])
 def api_train_and_eval():
