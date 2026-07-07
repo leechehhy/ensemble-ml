@@ -125,6 +125,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('step3BackBtn').addEventListener('click', () => setStep(2));
   document.getElementById('step3NextBtn').addEventListener('click', goStep4);
   document.getElementById('step4BackBtn').addEventListener('click', () => setStep(3));
+  document.getElementById('restartBtn').addEventListener('click', restartAll);
 
   // 평가 / 튜닝
   document.getElementById('evalBtn').addEventListener('click', runEval);
@@ -150,7 +151,6 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('predClearBtn').addEventListener('click', clearPredFile);
   document.getElementById('predictBtn').addEventListener('click', runPredict);
   document.getElementById('downloadBtn').addEventListener('click', downloadResults);
-  document.getElementById('resetPredBtn').addEventListener('click', resetPredict);
 
   // 라이티 캐릭터를 #loader에 삽입
   const loaderEl = document.getElementById('loader');
@@ -207,14 +207,39 @@ function setStep(n) {
 
 function goStep1() {
   sessionStorage.removeItem('SESSION_ID');
-  sessionStorage.removeItem('selectedModel'); setStep(1); }
+  sessionStorage.removeItem('selectedModel');
+  setStep(1);
+}
+
+function restartAll() {
+  // 모든 상태 초기화
+  SESSION_ID    = null;
+  selectedModel = null;
+  csvData       = null;
+  predCsvData   = null;
+  predResultCsv = null;
+  allColumns    = [];
+  bestParams    = {};
+  sessionStorage.removeItem('SESSION_ID');
+  sessionStorage.removeItem('selectedModel');
+
+  // 파일 업로드 UI 초기화
+  document.getElementById('fileInput').value = '';
+  document.getElementById('fileInfo').classList.add('hidden');
+  document.getElementById('previewSection').classList.add('hidden');
+  document.getElementById('step2NextBtn').disabled = true;
+
+  setStep(1);
+}
 function goStep2() {
   if (!validateStep1()) return;
   setStep(2);
   loadDataAndEval();
 }
 function goStep3() {
-  if (!SESSION_ID) {
+ error_refactoring
+  if (!SESSION_ID || !selectedModel) {
+main
     alert('모델 평가가 완료되지 않았습니다.\n파일을 업로드하고 모델 추천 단계를 먼저 실행해 주세요.');
     return;
   }
@@ -334,7 +359,9 @@ function parseAndPreview(csv, filename) {
   const sel = document.getElementById('targetSelect');
   sel.innerHTML = headers.map(h => `<option value="${h}">${h}</option>`).join('');
   sel.value = guessTargetColumn(headers, lines.slice(1));
-  sel.addEventListener('change', () => refreshFeatureSelection(sel.value));
+ error_refactoring
+  sel.onchange = () => refreshFeatureSelection(sel.value);
+ main
 
   // 행/열 정보
   document.getElementById('infoRows').textContent = `${lines.length - 1}행`;
@@ -761,10 +788,10 @@ async function loadDataAndEval() {
       });
       const d = await r.json();
       scores.push({ model, f1: d.ok ? d.f1 : 0, std: d.ok ? d.std : 0, ok: d.ok, err: d.err });
-      updateProgLog(model, d.ok ? d.f1 : 0, d.ok);
+      updateProgLog(model, d.ok ? d.f1 : 0, d.ok, d.err);
     } catch(e) {
       scores.push({ model, f1:0, std:0, ok:false, err:e.message });
-      updateProgLog(model, 0, false);
+      updateProgLog(model, 0, false, e.message);
     }
   }
 
@@ -772,7 +799,13 @@ async function loadDataAndEval() {
   document.getElementById('progPct').textContent   = '100%';
   document.getElementById('progBar').style.width   = '100%';
 
-  const best = scores.reduce((a,b) => b.f1 > a.f1 ? b : a, scores[0]);
+  const successScores = scores.filter(s => s.ok);
+  if (successScores.length === 0) {
+    alert('⚠️ 모든 모델 평가에 실패했습니다.\n데이터 형식을 확인하거나 피처 선택을 다시 설정해 주세요.');
+    goStep1();
+    return;
+  }
+  const best = successScores.reduce((a,b) => b.f1 > a.f1 ? b : a, successScores[0]);
   selectedModel = best.model;
   sessionStorage.setItem('selectedModel', selectedModel);
   console.log('[loadDataAndEval] selectedModel 설정됨:', selectedModel);
@@ -785,11 +818,13 @@ async function loadDataAndEval() {
     const card   = document.createElement('div');
     card.className = `model-card${isRec?' recommended':''}${iseSel?' selected':''}`;
     card.dataset.model = s.model;
+    const errShort = (!s.ok && s.err) ? escapeHtml(s.err.slice(0, 60)) : '';
     card.innerHTML = `
       <div class="model-name">${desc.emoji||'🤖'} ${s.model}</div>
       <div class="model-score" style="color:${color}">${s.ok?(s.f1*100).toFixed(1)+'%':'—'}</div>
       <div class="model-lbl">F1-weighted (${cvFolds}-Fold CV)</div>
-      ${s.ok?`<div class="model-std">±${(s.std*100).toFixed(1)}%</div>`:''}
+      ${s.ok ? `<div class="model-std">±${(s.std*100).toFixed(1)}%</div>` : ''}
+      ${!s.ok && s.err ? `<div title="${escapeHtml(s.err)}" style="font-size:10px;color:var(--danger);margin-top:4px;cursor:help;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${errShort}</div>` : ''}
       <div class="score-bar"><div class="score-bar-fill" style="width:${(s.f1*100).toFixed(1)}%"></div></div>
     `;
     card.addEventListener('click', () => {
@@ -848,12 +883,17 @@ function setProgLogRunning(model) {
   }));
 }
 
-function updateProgLog(model, score, ok) {
+function escapeHtml(str) {
+  return String(str || '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function updateProgLog(model, score, ok, errMsg) {
   const item = logItems[model];
   if (!item) return;
   item.classList.remove('running', 'pending');
   item.classList.add('done');
-  item.querySelector('.log-status').textContent = ok ? '완료' : '오류';
 
   // 바를 100%로 빠르게 채움
   const bar = item.querySelector('.log-bar');
@@ -861,8 +901,17 @@ function updateProgLog(model, score, ok) {
   bar.style.width = ok ? '100%' : '0%';
 
   const sc = item.querySelector('.log-score');
-  sc.textContent = ok ? `${(score*100).toFixed(1)}%` : '—';
-  sc.style.color = ok ? 'var(--success)' : 'var(--danger)';
+  if (ok) {
+    item.querySelector('.log-status').textContent = '완료';
+    sc.textContent = `${(score*100).toFixed(1)}%`;
+    sc.style.color = 'var(--success)';
+  } else {
+    const short = errMsg ? escapeHtml(errMsg.slice(0, 80)) : '오류';
+    item.querySelector('.log-status').innerHTML =
+      `<span title="${escapeHtml(errMsg||'')}" style="cursor:help;color:var(--danger);">오류</span>`;
+    sc.innerHTML =
+      `<span title="${escapeHtml(errMsg||'')}" style="cursor:help;font-size:10px;color:var(--danger);max-width:46px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;" >${short}</span>`;
+  }
 }
 
 function showModelDesc(model) {
@@ -1244,7 +1293,11 @@ function clearPredFile() {
 }
 
 async function runPredict() {
-  if (!SESSION_ID || !predCsvData) return;
+  if (!SESSION_ID) {
+    alert('⚠️ 세션 정보가 없습니다.\n데이터를 다시 업로드하고 모델 학습을 완료해 주세요.');
+    return;
+  }
+  if (!predCsvData) return;
   const btn     = document.getElementById('predictBtn');
   const spinner = document.getElementById('predictSpinner');
   btn.disabled  = true;
@@ -1318,6 +1371,3 @@ function downloadResults() {
   URL.revokeObjectURL(url);
 }
 
-function resetPredict() {
-  clearPredFile();
-}
