@@ -760,40 +760,60 @@ async function loadDataAndEval() {
   grid.innerHTML = '';
 
 
-  // 이전 로그 초기화
+  // 전체 모델을 대기 상태로 미리 렌더링
   logItems = {};
   document.getElementById('progLog').innerHTML = '';
-
-  // 전체 모델을 대기 상태로 미리 렌더링
   MODELS.forEach((m, i) => addProgLog(m, 'pending', i));
 
-  const scores = [];
-  for (let i = 0; i < MODELS.length; i++) {
-    const model = MODELS[i];
-    const pct   = Math.round((i / MODELS.length) * 100);
-    document.getElementById('progTitle').textContent = `평가 중: ${model}`;
-    document.getElementById('progPct').textContent   = `${pct}%`;
-    document.getElementById('progBar').style.width   = `${pct}%`;
-    setProgLogRunning(model);
-
-    try {
-      const r = await fetch('/api/evaluate_single', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ session_id:SESSION_ID, model, cv_folds:cvFolds })
-      });
-      const d = await r.json();
-      scores.push({ model, f1: d.ok ? d.f1 : 0, std: d.ok ? d.std : 0, ok: d.ok, err: d.err });
-      updateProgLog(model, d.ok ? d.f1 : 0, d.ok, d.err);
-    } catch(e) {
-      scores.push({ model, f1:0, std:0, ok:false, err:e.message });
-      updateProgLog(model, 0, false, e.message);
-    }
+  // 모델 평가는 백그라운드 job으로 실행 (튜닝과 동일한 방식).
+  // 예전엔 모델마다 순서대로 fetch를 기다렸는데, 느린 모델(RF/GB/ET/AdaBoost)이
+  // Render 같은 배포 환경의 게이트웨이 타임아웃(수십 초)을 넘기면 500 에러가 났음.
+  // job 방식은 서버 백그라운드 스레드에서 계속 진행되고, 프론트는 짧은 폴링만 하므로
+  // 타임아웃 설정과 무관하게 동작함.
+  let evalJobId;
+  try {
+    const r = await fetch('/api/evaluate/start', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ session_id:SESSION_ID, cv_folds:cvFolds })
+    });
+    const d = await r.json();
+    if (d.error) { alert('평가 시작 오류: ' + d.error); return; }
+    evalJobId = d.job_id;
+  } catch(e) {
+    alert('평가 시작 오류: ' + e.message);
+    return;
   }
 
-  document.getElementById('progTitle').textContent = '✅ 평가 완료';
-  document.getElementById('progPct').textContent   = '100%';
-  document.getElementById('progBar').style.width   = '100%';
+  const seen = new Set();
+  let scores = [];
+  while (true) {
+    let st;
+    try {
+      const r = await fetch(`/api/evaluate/status?job_id=${evalJobId}`);
+      st = await r.json();
+    } catch(e) {
+      await new Promise(res => setTimeout(res, 1500));
+      continue;
+    }
+    if (st.error && !st.results) { alert('평가 오류: ' + st.error); return; }
+
+    for (const res of (st.results || [])) {
+      if (seen.has(res.name)) continue;
+      seen.add(res.name);
+      setProgLogRunning(res.name);
+      updateProgLog(res.name, res.ok ? res.f1 : 0, res.ok, res.err);
+    }
+    scores = (st.results || []).map(r => ({ model: r.name, f1: r.f1, std: r.std, ok: r.ok, err: r.err }));
+
+    const pct = st.progress || 0;
+    document.getElementById('progTitle').textContent = st.done ? '✅ 평가 완료' : `평가 중: ${st.current || ''}`;
+    document.getElementById('progPct').textContent   = `${pct}%`;
+    document.getElementById('progBar').style.width   = `${pct}%`;
+
+    if (st.done) break;
+    await new Promise(res => setTimeout(res, 1500));
+  }
 
   const successScores = scores.filter(s => s.ok);
   if (successScores.length === 0) {
