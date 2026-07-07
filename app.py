@@ -92,13 +92,13 @@ def _auto_preprocess(df, target_col, feature_cols):
 def _make_model(name, params=None):
     p = params or {}
     if name == 'Random Forest':
-        kw = {k: v for k, v in p.items() if k in ['n_estimators','max_depth','min_samples_leaf','max_leaf_nodes','max_features','criterion']}
+        kw = {k: v for k, v in p.items() if k in ['n_estimators','max_depth','min_samples_leaf','max_leaf_nodes','max_features','criterion','class_weight']}
         return RandomForestClassifier(**kw, random_state=42, n_jobs=-1)
     elif name == 'Gradient Boosting':
         kw = {k: v for k, v in p.items() if k in ['n_estimators','max_depth','learning_rate','min_samples_leaf','max_leaf_nodes']}
         return GradientBoostingClassifier(**kw, random_state=42)
     elif name == 'Extra Trees':
-        kw = {k: v for k, v in p.items() if k in ['n_estimators','max_depth','min_samples_leaf','max_leaf_nodes','max_features']}
+        kw = {k: v for k, v in p.items() if k in ['n_estimators','max_depth','min_samples_leaf','max_leaf_nodes','max_features','class_weight']}
         return ExtraTreesClassifier(**kw, random_state=42, n_jobs=-1)
     elif name == 'AdaBoost':
         p2 = dict(p)
@@ -112,12 +112,12 @@ def _make_model(name, params=None):
         kw = {k: v for k, v in p.items() if k in ['n_estimators','max_depth','learning_rate','min_child_weight','max_leaves']}
         return _XGB(**kw, random_state=42, verbosity=0, eval_metric='logloss', n_jobs=-1)
     elif name == 'HistGBM (LightGBM계열)':
-        kw = {k: v for k, v in p.items() if k in ['max_iter','max_depth','learning_rate','min_samples_leaf','max_leaf_nodes']}
+        kw = {k: v for k, v in p.items() if k in ['max_iter','max_depth','learning_rate','min_samples_leaf','max_leaf_nodes','class_weight']}
         return HistGradientBoostingClassifier(**kw, random_state=42)
     elif name == 'CatBoost':
         if not _catboost_ok:
             raise ValueError('CatBoost 미지원')
-        kw = {k: v for k, v in p.items() if k in ['iterations','depth','learning_rate','l2_leaf_reg']}
+        kw = {k: v for k, v in p.items() if k in ['iterations','depth','learning_rate','l2_leaf_reg','auto_class_weights']}
         kw.setdefault('iterations', 100)
         return _CBC(**kw, random_state=42, verbose=0, thread_count=1, task_type='CPU')
     raise ValueError(f'Unknown model: {name}')
@@ -125,16 +125,31 @@ def _make_model(name, params=None):
 CW_MODELS      = {'Random Forest', 'Extra Trees', 'HistGBM (LightGBM계열)', 'CatBoost'}
 CW_UNSUPPORTED = {'Gradient Boosting', 'AdaBoost', 'XGBoost'}
 
-def _cross_val_f1(make_model_fn, X, y, cv, sample_weight=None):
-    """수동 CV — sklearn fit_params/params API 변경 영향 없음."""
+def _cross_val_f1(make_model_fn, X, y, cv, sample_weight=None, resample_strategy=None):
+    """수동 CV — sklearn fit_params/params API 변경 영향 없음.
+    resample_strategy: 'oversample'/'undersample'이면 train fold에만 리샘플링 적용."""
     scores = []
     for tr, val in cv.split(X, y):
         m = make_model_fn()
-        if sample_weight is not None:
-            m.fit(X[tr], y[tr], sample_weight=sample_weight[tr])
+        X_tr, y_tr_orig = X[tr], y[tr]
+        sw_tr = sample_weight[tr] if sample_weight is not None else None
+
+        # 폴드별 리샘플링 — val에는 적용하지 않아 leakage 방지
+        if resample_strategy in ('oversample', 'undersample'):
+            X_tr, y_tr_orig = _resample(X_tr, y_tr_orig, resample_strategy)
+            sw_tr = None  # 리샘플 후 sample_weight 불필요
+
+        # 희소 클래스가 폴드 학습셋에서 빠지면 XGBoost가 라벨 불연속으로 실패하므로
+        # 폴드마다 0..k-1로 재인코딩 후 예측을 원래 라벨로 복원
+        classes = np.unique(y_tr_orig)
+        y_tr    = np.searchsorted(classes, y_tr_orig)
+
+        if sw_tr is not None:
+            m.fit(X_tr, y_tr, sample_weight=sw_tr)
         else:
-            m.fit(X[tr], y[tr])
-        pred   = m.predict(X[val])
+            m.fit(X_tr, y_tr)
+        pred_enc = np.asarray(m.predict(X[val])).ravel().astype(int)
+        pred     = classes[pred_enc]
         scores.append(f1_score(y[val], pred, average='weighted', zero_division=0))
     return np.array(scores)
 
@@ -180,7 +195,27 @@ def _make_model_balanced(name, params, strategy):
             p['class_weight'] = 'balanced'
     return _make_model(name, p)
 
+class _RelabelWrapper:
+    """학습셋 라벨이 0..k-1로 연속되지 않으면(희소 클래스 분할 누락) XGBoost가 실패하므로
+    내부적으로 재인코딩해 학습하고 예측 시 원래 라벨로 복원하는 래퍼."""
+    def __init__(self, model):
+        self.model = model
+    def fit(self, X, y, **kw):
+        self.classes_ = np.unique(y)
+        self.model.fit(X, np.searchsorted(self.classes_, y), **kw)
+        return self
+    def predict(self, X):
+        p = np.asarray(self.model.predict(X)).ravel().astype(int)
+        return self.classes_[p]
+    def predict_proba(self, X):
+        return self.model.predict_proba(X)
+    @property
+    def feature_importances_(self):
+        return self.model.feature_importances_
+
 def _fit_model(model, name, X_tr, y_tr, strategy):
+    if len(np.unique(y_tr)) != int(np.max(y_tr)) + 1:
+        model = _RelabelWrapper(model)
     if strategy in ('oversample', 'undersample'):
         X_tr, y_tr = _resample(X_tr, y_tr, strategy)
         model.fit(X_tr, y_tr)
@@ -205,7 +240,7 @@ def api_load_data():
     body = request.get_json(silent=True)
     if not body:
         return jsonify({'error': '요청 본문이 없습니다'}), 400
-    sid              = body.get('session_id', str(uuid.uuid4()))
+    sid              = body.get('session_id') or str(uuid.uuid4())
     csv_str          = body.get('csv', '')
     target_col       = body.get('target', '')
     if not csv_str or not target_col:
@@ -280,20 +315,26 @@ def api_evaluate_single():
     X, y = state['X'], state['y']
     balance_strategy = state['balance_strategy']
     cv   = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
-    strat = 'balanced' if balance_strategy in ('balanced','oversample','undersample') else 'none'
 
-    use_sw = strat == 'balanced' and model_name in CW_UNSUPPORTED
+    # oversample/undersample은 폴드별 리샘플링으로 처리 (train_and_eval과 동일 방식)
+    resample    = balance_strategy if balance_strategy in ('oversample', 'undersample') else None
+    strat_model = 'balanced' if balance_strategy == 'balanced' else 'none'
+    use_sw = strat_model == 'balanced' and model_name in CW_UNSUPPORTED
     sw     = _compute_sample_weight(y) if use_sw else None
+
     try:
         scores = _cross_val_f1(
-            lambda: _make_model_balanced(model_name, {}, strat),
-            X, y, cv, sample_weight=sw
+            lambda: _make_model_balanced(model_name, {}, strat_model),
+            X, y, cv, sample_weight=sw, resample_strategy=resample
         )
         return jsonify({'name': model_name, 'f1': float(scores.mean()), 'std': float(scores.std()), 'ok': True, 'cv_folds': cv_folds})
     except Exception as e:
         # sample_weight 없이 재시도 (fallback)
         try:
-            scores2 = _cross_val_f1(lambda: _make_model_balanced(model_name, {}, strat), X, y, cv)
+            scores2 = _cross_val_f1(
+                lambda: _make_model_balanced(model_name, {}, strat_model),
+                X, y, cv, resample_strategy=resample
+            )
             return jsonify({'name': model_name, 'f1': float(scores2.mean()), 'std': float(scores2.std()), 'ok': True, 'cv_folds': cv_folds})
         except Exception as e2:
             return jsonify({'name': model_name, 'f1': 0.0, 'std': 0.0, 'ok': False, 'err': str(e2)})
@@ -320,10 +361,12 @@ def api_train_and_eval():
     test_size        = state['test_size']
 
     try:
-        X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=test_size, random_state=42, stratify=y)
+        # 표본 1개짜리 클래스가 있으면 층화 분할이 불가능하므로 일반 분할로 대체
+        stratify_arg = y if min(Counter(y).values()) >= 2 else None
+        X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=test_size, random_state=42, stratify=stratify_arg)
         strat = balance_strategy
         m = _make_model_balanced(model_name, params, 'balanced' if strat == 'balanced' else 'none')
-        _fit_model(m, model_name, X_tr, y_tr, strat)
+        m = _fit_model(m, model_name, X_tr, y_tr, strat)
 
         if is_binary and hasattr(m, 'predict_proba'):
             y_pred = (m.predict_proba(X_te)[:, 1] >= threshold).astype(int)
@@ -331,7 +374,7 @@ def api_train_and_eval():
             y_pred = m.predict(X_te)
 
         avg = 'binary' if is_binary else 'weighted'
-        cm  = confusion_matrix(y_te, y_pred)
+        cm  = confusion_matrix(y_te, y_pred, labels=list(range(len(le.classes_))))
         res = {
             'accuracy':  float(accuracy_score(y_te, y_pred)),
             'precision': float(precision_score(y_te, y_pred, average=avg, zero_division=0)),
@@ -391,7 +434,9 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
         return
 
     try:
-        strat      = 'balanced' if balance_strategy in ('balanced','oversample','undersample') else 'none'
+        # oversample/undersample은 폴드별 리샘플링으로 처리 (evaluate_single과 동일 방식)
+        resample    = balance_strategy if balance_strategy in ('oversample', 'undersample') else None
+        strat_model = 'balanced' if balance_strategy == 'balanced' else 'none'
         cv         = StratifiedKFold(n_splits=int(cv_folds), shuffle=True, random_state=42)
         n_iter1, n_iter2 = 10, 8
         param_list = list(ParameterSampler(grid, n_iter=n_iter1, random_state=42))
@@ -399,7 +444,7 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
         best_params = None
         best_estimator = None
 
-        use_sw = strat == 'balanced' and model_name in CW_UNSUPPORTED
+        use_sw = strat_model == 'balanced' and model_name in CW_UNSUPPORTED
         sw     = _compute_sample_weight(y) if use_sw else None
 
         # Phase 1: 10 trials (0→75%)
@@ -407,8 +452,8 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
             p = dict(params)
             try:
                 sc = _cross_val_f1(
-                    lambda _p=p: _make_model_balanced(model_name, _p, strat),
-                    X, y, cv, sample_weight=sw
+                    lambda _p=p: _make_model_balanced(model_name, _p, strat_model),
+                    X, y, cv, sample_weight=sw, resample_strategy=resample
                 )
                 s = float(sc.mean())
             except Exception:
@@ -423,11 +468,8 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
             JOBS[job_id] = {'progress': 0, 'done': True, 'result': None, 'error': '모든 파라미터 탐색 실패'}
             return
 
-        m_best = _make_model_balanced(model_name, dict(best_params), strat)
-        if strat == 'balanced' and model_name in CW_UNSUPPORTED:
-            m_best.fit(X, y, sample_weight=_compute_sample_weight(y))
-        else:
-            m_best.fit(X, y)
+        m_best = _make_model_balanced(model_name, dict(best_params), strat_model)
+        m_best = _fit_model(m_best, model_name, X, y, balance_strategy)
         train_score    = float(f1_score(y, m_best.predict(X), average='weighted', zero_division=0))
         gap            = train_score - best_cv
         best_estimator = m_best
@@ -439,20 +481,24 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
             if 'min_samples_leaf' in tight:
                 tight['min_samples_leaf'] = [v for v in tight['min_samples_leaf'] if v >= 3] or [5]
             tight_list = list(ParameterSampler(tight, n_iter=n_iter2, random_state=0))
+            best_s2, best_params2 = -1, None
             for j, params2 in enumerate(tight_list):
                 p2 = dict(params2)
                 try:
                     sc2 = _cross_val_f1(
-                        lambda _p=p2: _make_model_balanced(model_name, _p, strat),
-                        X, y, cv, sample_weight=sw
+                        lambda _p=p2: _make_model_balanced(model_name, _p, strat_model),
+                        X, y, cv, sample_weight=sw, resample_strategy=resample
                     )
                     s2 = float(sc2.mean())
                 except Exception:
                     s2 = 0.0
-                if s2 >= best_cv * 0.95 and s2 > best_cv - 0.05:
-                    best_cv     = max(best_cv, s2)
-                    best_params = dict(params2)
+                if s2 >= best_cv * 0.95 and s2 > best_cv - 0.05 and s2 > best_s2:
+                    best_s2     = s2
+                    best_params2 = dict(params2)
                 JOBS[job_id]['progress'] = 75 + int((j + 1) / n_iter2 * 20)
+            if best_params2 is not None:
+                best_cv     = best_s2
+                best_params = best_params2
 
         JOBS[job_id]['progress'] = 98
 
@@ -464,17 +510,30 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
             elif isinstance(v, np.floating): clean[k] = float(v)
             else:                           clean[k] = v
 
-        # Optimal threshold (binary)
+        # Optimal threshold (binary) — holdout split으로 data leakage 방지
         best_thr = None
         if is_binary and hasattr(best_estimator, 'predict_proba'):
-            proba   = best_estimator.predict_proba(X)[:, 1]
-            best_f1 = 0.0
-            for thr in np.arange(0.1, 0.91, 0.01):
-                preds = (proba >= thr).astype(int)
-                f     = float(f1_score(y, preds, zero_division=0))
-                if f > best_f1:
-                    best_f1  = f
-                    best_thr = round(float(thr), 2)
+            try:
+                stratify_thr = y if min(Counter(y).values()) >= 2 else None
+                X_thr_tr, X_thr_val, y_thr_tr, y_thr_val = train_test_split(
+                    X, y, test_size=0.2, random_state=99, stratify=stratify_thr
+                )
+                m_thr = _make_model_balanced(model_name, dict(best_params), strat)
+                if strat == 'balanced' and model_name in CW_UNSUPPORTED:
+                    m_thr.fit(X_thr_tr, y_thr_tr,
+                              sample_weight=_compute_sample_weight(y_thr_tr))
+                else:
+                    m_thr.fit(X_thr_tr, y_thr_tr)
+                proba   = m_thr.predict_proba(X_thr_val)[:, 1]
+                best_f1 = 0.0
+                for thr in np.arange(0.1, 0.91, 0.01):
+                    preds = (proba >= thr).astype(int)
+                    f     = float(f1_score(y_thr_val, preds, zero_division=0))
+                    if f > best_f1:
+                        best_f1  = f
+                        best_thr = round(float(thr), 2)
+            except Exception:
+                pass  # threshold 탐색 실패 시 기본값(0.5) 사용
 
         result = {'params': clean, 'cv_score': best_cv, 'train_score': train_score, 'gap': gap}
         if best_thr is not None:
