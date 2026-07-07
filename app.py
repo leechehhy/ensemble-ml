@@ -15,6 +15,10 @@ from collections import Counter
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
 
+# 병렬 작업 수: 저사양 배포 환경(Render 등)에서는 1로 제한해 메모리 초과 방지
+# 필요 시 환경변수 N_JOBS로 재정의 가능
+N_JOBS = int(os.environ.get('N_JOBS', 1 if os.environ.get('RENDER') else -1))
+
 # 고정 경로 사용: gunicorn 다중 워커에서도 세션/잡 상태를 공유하기 위함
 # (tempfile.mkdtemp()는 프로세스마다 다른 폴더를 만들어 워커 간 '세션 없음' 오류 발생)
 SESSIONS_DIR = os.path.join(tempfile.gettempdir(), 'ensemble-ml-sessions')
@@ -127,13 +131,13 @@ def _make_model(name, params=None):
     p = params or {}
     if name == 'Random Forest':
         kw = {k: v for k, v in p.items() if k in ['n_estimators','max_depth','min_samples_leaf','max_leaf_nodes','max_features','criterion','class_weight']}
-        return RandomForestClassifier(**kw, random_state=42, n_jobs=-1)
+        return RandomForestClassifier(**kw, random_state=42, n_jobs=N_JOBS)
     elif name == 'Gradient Boosting':
         kw = {k: v for k, v in p.items() if k in ['n_estimators','max_depth','learning_rate','min_samples_leaf','max_leaf_nodes']}
         return GradientBoostingClassifier(**kw, random_state=42)
     elif name == 'Extra Trees':
         kw = {k: v for k, v in p.items() if k in ['n_estimators','max_depth','min_samples_leaf','max_leaf_nodes','max_features','class_weight']}
-        return ExtraTreesClassifier(**kw, random_state=42, n_jobs=-1)
+        return ExtraTreesClassifier(**kw, random_state=42, n_jobs=N_JOBS)
     elif name == 'AdaBoost':
         p2 = dict(p)
         depth = int(p2.pop('base_max_depth', 1))
@@ -144,7 +148,7 @@ def _make_model(name, params=None):
         if not _xgb_ok:
             raise ValueError('XGBoost 미지원')
         kw = {k: v for k, v in p.items() if k in ['n_estimators','max_depth','learning_rate','min_child_weight','max_leaves']}
-        return _XGB(**kw, random_state=42, verbosity=0, eval_metric='logloss', n_jobs=-1)
+        return _XGB(**kw, random_state=42, verbosity=0, eval_metric='logloss', n_jobs=N_JOBS)
     elif name == 'HistGBM (LightGBM계열)':
         kw = {k: v for k, v in p.items() if k in ['max_iter','max_depth','learning_rate','min_samples_leaf','max_leaf_nodes','class_weight']}
         return HistGradientBoostingClassifier(**kw, random_state=42)
