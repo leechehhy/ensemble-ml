@@ -1,6 +1,6 @@
-import os, pickle, uuid, threading, io
+import os, pickle, uuid, threading, io, json, time
 import tempfile
-from flask import Flask, request, jsonify, send_from_directory, Response
+from flask import Flask, request, jsonify, render_template, Response
 
 import pandas as pd
 import numpy as np
@@ -14,17 +14,51 @@ from sklearn.preprocessing import LabelEncoder
 from collections import Counter
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
-app.secret_key = os.environ.get('SECRET_KEY', 'ensemble-ml-2024-secret')
 
-SESSIONS_DIR = tempfile.mkdtemp()
-JOBS = {}  # job_id -> {'progress': int, 'done': bool, 'result': dict, 'error': str}
+# 고정 경로 사용: gunicorn 다중 워커에서도 세션/잡 상태를 공유하기 위함
+# (tempfile.mkdtemp()는 프로세스마다 다른 폴더를 만들어 워커 간 '세션 없음' 오류 발생)
+SESSIONS_DIR = os.path.join(tempfile.gettempdir(), 'ensemble-ml-sessions')
+JOBS_DIR     = os.path.join(tempfile.gettempdir(), 'ensemble-ml-jobs')
+os.makedirs(SESSIONS_DIR, exist_ok=True)
+os.makedirs(JOBS_DIR, exist_ok=True)
 
-def _cleanup_jobs():
-    """완료된 job이 200개 초과 시 오래된 것 제거."""
-    done_ids = [k for k, v in JOBS.items() if v.get('done')]
-    if len(done_ids) > 200:
-        for k in done_ids[:100]:
-            JOBS.pop(k, None)
+STALE_SECONDS = 24 * 3600  # 24시간 지난 세션/잡 파일은 정리
+
+def _cleanup_dir(dirpath):
+    """오래된 상태 파일 제거 (디스크 누적 방지)."""
+    now = time.time()
+    try:
+        for fn in os.listdir(dirpath):
+            fp = os.path.join(dirpath, fn)
+            try:
+                if now - os.path.getmtime(fp) > STALE_SECONDS:
+                    os.remove(fp)
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+# ─────────────────────────────────────────────
+# Job state helpers (파일 기반 → 다중 워커 안전)
+# ─────────────────────────────────────────────
+def _job_path(job_id):
+    return os.path.join(JOBS_DIR, f'{job_id}.json')
+
+def save_job(job_id, data):
+    tmp = _job_path(job_id) + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(data, f)
+    os.replace(tmp, _job_path(job_id))  # 원자적 교체 (폴링 중 부분 읽기 방지)
+
+def load_job(job_id):
+    path = _job_path(job_id)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding='utf-8') as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
 
 # ─────────────────────────────────────────────
 # Optional imports
@@ -59,7 +93,7 @@ def load_state(sid):
 # ─────────────────────────────────────────────
 # ML helpers
 # ─────────────────────────────────────────────
-def _auto_preprocess(df, target_col, feature_cols):
+def _auto_preprocess(df, feature_cols):
     issues = []
     df = df.copy()
     for col in feature_cols:
@@ -161,7 +195,7 @@ def _compute_sample_weight(y):
     return np.array([w[yi] for yi in y])
 
 def _resample(X, y, strategy):
-    np.random.seed(42)
+    rng = np.random.default_rng(42)
     counts = Counter(y)
     if strategy == 'oversample':
         target_n = max(counts.values())
@@ -169,20 +203,20 @@ def _resample(X, y, strategy):
         for cls, cnt in counts.items():
             if cnt < target_n:
                 idx   = np.where(y == cls)[0]
-                extra = np.random.choice(idx, target_n - cnt, replace=True)
+                extra = rng.choice(idx, target_n - cnt, replace=True)
                 Xp.append(X[extra]); yp.append(y[extra])
         Xr, yr = np.vstack(Xp), np.concatenate(yp)
-        shuf = np.random.permutation(len(yr))
+        shuf = rng.permutation(len(yr))
         return Xr[shuf], yr[shuf]
     elif strategy == 'undersample':
         target_n = min(counts.values())
         Xp, yp  = [], []
         for cls in counts:
             idx    = np.where(y == cls)[0]
-            chosen = np.random.choice(idx, target_n, replace=False)
+            chosen = rng.choice(idx, target_n, replace=False)
             Xp.append(X[chosen]); yp.append(y[chosen])
         Xr, yr = np.vstack(Xp), np.concatenate(yp)
-        shuf = np.random.permutation(len(yr))
+        shuf = rng.permutation(len(yr))
         return Xr[shuf], yr[shuf]
     return X, y
 
@@ -198,8 +232,9 @@ def _make_model_balanced(name, params, strategy):
 class _RelabelWrapper:
     """학습셋 라벨이 0..k-1로 연속되지 않으면(희소 클래스 분할 누락) XGBoost가 실패하므로
     내부적으로 재인코딩해 학습하고 예측 시 원래 라벨로 복원하는 래퍼."""
-    def __init__(self, model):
+    def __init__(self, model, n_classes):
         self.model = model
+        self.n_classes = int(n_classes)
     def fit(self, X, y, **kw):
         self.classes_ = np.unique(y)
         self.model.fit(X, np.searchsorted(self.classes_, y), **kw)
@@ -208,14 +243,20 @@ class _RelabelWrapper:
         p = np.asarray(self.model.predict(X)).ravel().astype(int)
         return self.classes_[p]
     def predict_proba(self, X):
-        return self.model.predict_proba(X)
+        # 재인코딩된 컬럼을 원래 클래스 인덱스 위치로 복원
+        # (누락 클래스 확률은 0) — 컬럼-클래스 불일치 방지
+        p   = np.asarray(self.model.predict_proba(X))
+        out = np.zeros((p.shape[0], self.n_classes), dtype=float)
+        out[:, self.classes_.astype(int)] = p
+        return out
     @property
     def feature_importances_(self):
         return self.model.feature_importances_
 
-def _fit_model(model, name, X_tr, y_tr, strategy):
-    if len(np.unique(y_tr)) != int(np.max(y_tr)) + 1:
-        model = _RelabelWrapper(model)
+def _fit_model(model, name, X_tr, y_tr, strategy, n_classes=None):
+    n_all = int(n_classes) if n_classes is not None else int(np.max(y_tr)) + 1
+    if len(np.unique(y_tr)) != n_all:
+        model = _RelabelWrapper(model, n_all)
     if strategy in ('oversample', 'undersample'):
         X_tr, y_tr = _resample(X_tr, y_tr, strategy)
         model.fit(X_tr, y_tr)
@@ -233,7 +274,8 @@ def _fit_model(model, name, X_tr, y_tr, strategy):
 # ─────────────────────────────────────────────
 @app.route('/')
 def index():
-    return send_from_directory('templates', 'index.html')
+    # send_from_directory('templates', ...)는 실행 위치(cwd)에 의존 → render_template 사용
+    return render_template('index.html')
 
 @app.route('/api/load_data', methods=['POST'])
 def api_load_data():
@@ -253,7 +295,7 @@ def api_load_data():
         df = pd.read_csv(io.StringIO(csv_str))
         df.columns = [c.strip() for c in df.columns]
         feature_names = [c for c in (selected_features or df.columns.tolist()) if c != target_col and c in df.columns]
-        df, prep_issues = _auto_preprocess(df, target_col, feature_names)
+        df, prep_issues = _auto_preprocess(df, feature_names)
 
         encoders = {}
         for col in feature_names:
@@ -305,7 +347,9 @@ def api_evaluate_single():
     if not body:
         return jsonify({'ok': False, 'err': '요청 본문 없음'}), 400
     sid        = body.get('session_id')
-    model_name = body['model']
+    model_name = body.get('model')
+    if not model_name:
+        return jsonify({'ok': False, 'err': 'model 누락'}), 400
     cv_folds   = int(body.get('cv_folds', 5))
 
     state = load_state(sid)
@@ -329,7 +373,9 @@ def api_evaluate_single():
         )
         return jsonify({'name': model_name, 'f1': float(scores.mean()), 'std': float(scores.std()), 'ok': True, 'cv_folds': cv_folds})
     except Exception as e:
-        # sample_weight 없이 재시도 (fallback)
+        # sample_weight 사용 시에만 미사용으로 재시도 (sw=None이면 동일 계산 반복일 뿐)
+        if sw is None:
+            return jsonify({'name': model_name, 'f1': 0.0, 'std': 0.0, 'ok': False, 'err': str(e)})
         try:
             scores2 = _cross_val_f1(
                 lambda: _make_model_balanced(model_name, {}, strat_model),
@@ -345,7 +391,9 @@ def api_train_and_eval():
     if not body:
         return jsonify({'error': '요청 본문 없음'}), 400
     sid        = body.get('session_id')
-    model_name = body['model']
+    model_name = body.get('model')
+    if not model_name:
+        return jsonify({'error': 'model 누락'}), 400
     params     = body.get('params', {})
     threshold  = float(body.get('threshold', 0.5))
 
@@ -366,7 +414,7 @@ def api_train_and_eval():
         X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=test_size, random_state=42, stratify=stratify_arg)
         strat = balance_strategy
         m = _make_model_balanced(model_name, params, 'balanced' if strat == 'balanced' else 'none')
-        m = _fit_model(m, model_name, X_tr, y_tr, strat)
+        m = _fit_model(m, model_name, X_tr, y_tr, strat, n_classes=len(le.classes_))
 
         if is_binary and hasattr(m, 'predict_proba'):
             y_pred = (m.predict_proba(X_te)[:, 1] >= threshold).astype(int)
@@ -410,9 +458,10 @@ def api_train_and_eval():
 
 def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
     """Background tuning job."""
+    job = {'progress': 0, 'done': False, 'result': None, 'error': None}
     state = load_state(sid)
     if not state:
-        JOBS[job_id] = {'progress': 0, 'done': True, 'error': '세션 없음', 'result': None}
+        save_job(job_id, {'progress': 0, 'done': True, 'error': '세션 없음', 'result': None})
         return
 
     X, y      = state['X'], state['y']
@@ -430,7 +479,7 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
 
     grid = _GRIDS.get(model_name)
     if not grid:
-        JOBS[job_id] = {'progress': 0, 'done': True, 'error': f'{model_name}: 지원하지 않는 모델', 'result': None}
+        save_job(job_id, {'progress': 0, 'done': True, 'error': f'{model_name}: 지원하지 않는 모델', 'result': None})
         return
 
     try:
@@ -461,11 +510,12 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
             if s > best_cv:
                 best_cv     = s
                 best_params = p
-            JOBS[job_id]['progress'] = int((i + 1) / n_iter1 * 75)
+            job['progress'] = int((i + 1) / n_iter1 * 75)
+            save_job(job_id, job)
 
         # Phase 2: anti-overfit refinement (75→95%)
         if best_params is None:
-            JOBS[job_id] = {'progress': 0, 'done': True, 'result': None, 'error': '모든 파라미터 탐색 실패'}
+            save_job(job_id, {'progress': 0, 'done': True, 'result': None, 'error': '모든 파라미터 탐색 실패'})
             return
 
         m_best = _make_model_balanced(model_name, dict(best_params), strat_model)
@@ -495,12 +545,14 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
                 if s2 >= best_cv * 0.95 and s2 > best_cv - 0.05 and s2 > best_s2:
                     best_s2     = s2
                     best_params2 = dict(params2)
-                JOBS[job_id]['progress'] = 75 + int((j + 1) / n_iter2 * 20)
+                job['progress'] = 75 + int((j + 1) / n_iter2 * 20)
+                save_job(job_id, job)
             if best_params2 is not None:
                 best_cv     = best_s2
                 best_params = best_params2
 
-        JOBS[job_id]['progress'] = 98
+        job['progress'] = 98
+        save_job(job_id, job)
 
         # Clean params
         clean = {}
@@ -518,12 +570,11 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
                 X_thr_tr, X_thr_val, y_thr_tr, y_thr_val = train_test_split(
                     X, y, test_size=0.2, random_state=99, stratify=stratify_thr
                 )
-                m_thr = _make_model_balanced(model_name, dict(best_params), strat)
-                if strat == 'balanced' and model_name in CW_UNSUPPORTED:
-                    m_thr.fit(X_thr_tr, y_thr_tr,
-                              sample_weight=_compute_sample_weight(y_thr_tr))
-                else:
-                    m_thr.fit(X_thr_tr, y_thr_tr)
+                # (버그 수정) 기존 코드는 미정의 변수 strat 참조 → NameError가
+                # except에 삼켜져 최적 threshold가 절대 반환되지 않았음
+                m_thr = _make_model_balanced(model_name, dict(best_params), strat_model)
+                m_thr = _fit_model(m_thr, model_name, X_thr_tr, y_thr_tr,
+                                   balance_strategy, n_classes=len(np.unique(y)))
                 proba   = m_thr.predict_proba(X_thr_val)[:, 1]
                 best_f1 = 0.0
                 for thr in np.arange(0.1, 0.91, 0.01):
@@ -539,11 +590,12 @@ def _run_tune(job_id, sid, model_name, balance_strategy, cv_folds):
         if best_thr is not None:
             result['threshold'] = best_thr
 
-        JOBS[job_id] = {'progress': 100, 'done': True, 'result': result, 'error': None}
+        save_job(job_id, {'progress': 100, 'done': True, 'result': result, 'error': None})
     except Exception as e:
-        JOBS[job_id] = {'progress': 0, 'done': True, 'result': None, 'error': str(e)}
+        save_job(job_id, {'progress': 0, 'done': True, 'result': None, 'error': str(e)})
     finally:
-        _cleanup_jobs()
+        _cleanup_dir(JOBS_DIR)
+        _cleanup_dir(SESSIONS_DIR)
 
 @app.route('/api/tune/start', methods=['POST'])
 def api_tune_start():
@@ -551,12 +603,14 @@ def api_tune_start():
     if not body:
         return jsonify({'error': '요청 본문 없음'}), 400
     sid              = body.get('session_id')
-    model_name       = body['model']
+    model_name       = body.get('model')
+    if not model_name:
+        return jsonify({'error': 'model 누락'}), 400
     balance_strategy = body.get('balance', 'none')
     cv_folds         = int(body.get('cv_folds', 5))
 
     job_id = str(uuid.uuid4())
-    JOBS[job_id] = {'progress': 0, 'done': False, 'result': None, 'error': None}
+    save_job(job_id, {'progress': 0, 'done': False, 'result': None, 'error': None})
 
     t = threading.Thread(target=_run_tune, args=(job_id, sid, model_name, balance_strategy, cv_folds), daemon=True)
     t.start()
@@ -565,7 +619,7 @@ def api_tune_start():
 @app.route('/api/tune/status', methods=['GET'])
 def api_tune_status():
     job_id = request.args.get('job_id')
-    job    = JOBS.get(job_id)
+    job    = load_job(job_id) if job_id else None
     if not job:
         return jsonify({'error': '작업 없음'}), 404
     return jsonify(job)
@@ -576,7 +630,9 @@ def api_predict():
     if not body:
         return jsonify({'error': '요청 본문 없음'}), 400
     sid     = body.get('session_id')
-    csv_str = body['csv']
+    csv_str = body.get('csv')
+    if not csv_str:
+        return jsonify({'error': 'csv 누락'}), 400
 
     state = load_state(sid)
     if not state:
@@ -595,7 +651,7 @@ def api_predict():
     try:
         df_n = pd.read_csv(io.StringIO(csv_str))
         df_n.columns = [c.strip() for c in df_n.columns]
-        df_p, _ = _auto_preprocess(df_n, None, feature_names)
+        df_p, _ = _auto_preprocess(df_n, feature_names)
 
         for col, enc in encoders.items():
             if col in df_p.columns:
