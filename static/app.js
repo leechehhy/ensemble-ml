@@ -244,7 +244,10 @@ function goStep3() {
   setStep(3);
   buildParamControls(selectedModel);
 }
-function goStep4() { setStep(4); }
+function goStep4() {
+  clearPredFile();  // 이전 업로드 파일·결과 초기화
+  setStep(4);
+}
 
 // ── STEP 1 유효성 검사 ───────────────────────────────────────
 function validateStep1() {
@@ -785,7 +788,8 @@ async function loadDataAndEval() {
     return;
   }
 
-  const seen = new Set();
+  const seen    = new Set();
+  const running = new Set();   // setProgLogRunning을 호출한 모델 추적
   let scores = [];
   while (true) {
     let st;
@@ -801,13 +805,24 @@ async function loadDataAndEval() {
     for (const res of (st.results || [])) {
       if (seen.has(res.name)) continue;
       seen.add(res.name);
-      setProgLogRunning(res.name);
+      running.delete(res.name);
+      // 결과가 이미 있는 모델은 setProgLogRunning 없이 바로 완료 처리
+      // (rAF 충돌 방지: setProgLogRunning의 rAF가 updateProgLog 이후에 실행되어 바를 85%로 되돌리는 버그)
       updateProgLog(res.name, res.ok ? res.f1 : 0, res.ok, res.err);
     }
+
+    // 현재 평가 중인 모델만 running 애니메이션 적용 (최초 1회)
+    if (st.current && !seen.has(st.current) && !running.has(st.current)) {
+      running.add(st.current);
+      setProgLogRunning(st.current);
+    }
+
     scores = (st.results || []).map(r => ({ model: r.name, f1: r.f1, std: r.std, ok: r.ok, err: r.err }));
 
     const pct = st.progress || 0;
-    document.getElementById('progTitle').textContent = st.done ? '✅ 평가 완료' : `평가 중: ${st.current || ''}`;
+    document.getElementById('progTitle').textContent = st.done
+      ? '✅ 평가 완료'
+      : `🔍 검증 중... (${seen.size}/${MODELS.length})`;
     document.getElementById('progPct').textContent   = `${pct}%`;
     document.getElementById('progBar').style.width   = `${pct}%`;
 
@@ -834,14 +849,12 @@ async function loadDataAndEval() {
     const card   = document.createElement('div');
     card.className = `model-card${isRec?' recommended':''}${iseSel?' selected':''}`;
     card.dataset.model = s.model;
-    const errShort = (!s.ok && s.err) ? escapeHtml(s.err.slice(0, 60)) : '';
     card.innerHTML = `
       <div class="model-name">${desc.emoji||'🤖'} ${s.model}</div>
       <div class="model-score" style="color:${color}">${s.ok?(s.f1*100).toFixed(1)+'%':'—'}</div>
-      <div class="model-lbl">F1-weighted (${cvFolds}-Fold CV)</div>
-      ${s.ok ? `<div class="model-std">±${(s.std*100).toFixed(1)}%</div>` : ''}
-      ${!s.ok && s.err ? `<div title="${escapeHtml(s.err)}" style="font-size:10px;color:var(--danger);margin-top:4px;cursor:help;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${errShort}</div>` : ''}
-      <div class="score-bar"><div class="score-bar-fill" style="width:${(s.f1*100).toFixed(1)}%"></div></div>
+      <div class="model-lbl">${s.ok ? `F1-weighted (${cvFolds}-Fold CV)` : '이 데이터에 적합하지 않습니다'}</div>
+      ${s.ok ? `<div class="model-std">±${(s.std*100).toFixed(1)}%</div>` : `<div title="${escapeHtml(s.err||'')}" style="font-size:10px;color:var(--danger);margin-top:4px;cursor:help;">추천 불가 (마우스 올려 상세 확인)</div>`}
+      <div class="score-bar"><div class="score-bar-fill" style="width:${s.ok?(s.f1*100).toFixed(1):0}%"></div></div>
     `;
     card.addEventListener('click', () => {
       document.querySelectorAll('.model-card').forEach(c=>c.classList.remove('selected'));
@@ -919,14 +932,13 @@ function updateProgLog(model, score, ok, errMsg) {
   const sc = item.querySelector('.log-score');
   if (ok) {
     item.querySelector('.log-status').textContent = '완료';
-    sc.textContent = `${(score*100).toFixed(1)}%`;
+    sc.textContent = '✓ 완료';
     sc.style.color = 'var(--success)';
   } else {
-    const short = errMsg ? escapeHtml(errMsg.slice(0, 80)) : '오류';
     item.querySelector('.log-status').innerHTML =
-      `<span title="${escapeHtml(errMsg||'')}" style="cursor:help;color:var(--danger);">오류</span>`;
+      `<span title="${escapeHtml(errMsg||'')}" style="cursor:help;color:var(--danger);">부적합</span>`;
     sc.innerHTML =
-      `<span title="${escapeHtml(errMsg||'')}" style="cursor:help;font-size:10px;color:var(--danger);max-width:46px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;" >${short}</span>`;
+      `<span title="${escapeHtml(errMsg||'')}" style="cursor:help;font-size:10px;color:var(--danger);">추천 불가</span>`;
   }
 }
 
