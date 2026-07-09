@@ -1112,12 +1112,20 @@ function renderMetrics(d) {
     const cmSec  = document.getElementById('cmSection');
     const cmWrap = document.getElementById('cmWrap');
     cmSec.classList.remove('hidden');
+
+    // sklearn: cm[실제_idx][예측_idx]
+    // 표시 형태: 행=예측, 열=실제 / Positive(1) 먼저 (역순)
+    const clsRev = [...cls].reverse(); // [0,1] → [1,0]
+
     let html = '<table class="cm-table"><thead><tr><th></th>' +
-      cls.map(c=>`<th>예측: ${c}</th>`).join('') + '</tr></thead><tbody>';
-    cm.forEach((row, i) => {
-      html += `<tr><th>실제: ${cls[i]}</th>` +
-        row.map((v,j) => {
-          const bg = i===j ? 'rgba(22,163,74,.15)' : v>0 ? 'rgba(220,38,38,.08)' : '';
+      clsRev.map(c => `<th>실제: ${c}</th>`).join('') + '</tr></thead><tbody>';
+    clsRev.forEach(predCls => {
+      const pi = cls.indexOf(predCls); // 예측 클래스의 원래 인덱스
+      html += `<tr><th>예측: ${predCls}</th>` +
+        clsRev.map(actualCls => {
+          const ai = cls.indexOf(actualCls); // 실제 클래스의 원래 인덱스
+          const v  = cm[ai][pi];             // cm[실제][예측]
+          const bg = predCls === actualCls ? 'rgba(22,163,74,.15)' : v > 0 ? 'rgba(220,38,38,.08)' : '';
           return `<td style="background:${bg}">${v}</td>`;
         }).join('') + '</tr>';
     });
@@ -1139,17 +1147,88 @@ function renderMetrics(d) {
   }
 
   if (d.feature_importance?.length > 0) {
-    const sec   = document.getElementById('fiSection');
-    const chart = document.getElementById('fiChart');
-    sec.classList.remove('hidden');
-    const max = d.feature_importance[0][1];
-    chart.innerHTML = d.feature_importance.map(([name, val]) => `
-      <div class="fi-row">
-        <div class="fi-name" title="${name}">${name}</div>
-        <div class="fi-bar-bg"><div class="fi-bar-fill" style="width:${(val/max*100).toFixed(1)}%"></div></div>
-        <div class="fi-val">${(val*100).toFixed(1)}%</div>
-      </div>`).join('');
+    document.getElementById('fiSection').classList.remove('hidden');
+    renderFiChart(d.feature_importance);
   }
+}
+
+function renderFiChart(features) {
+  // matplotlib barh() 스타일 SVG 차트
+  const items = [...features].reverse(); // 위쪽이 중요도 높은 순
+  const n     = items.length;
+
+  const ML = 155, MR = 70, MT = 44, MB = 36;
+  const BAR_H = 22, BAR_GAP = 9;
+  const chartW = 460;
+  const svgW = ML + chartW + MR;
+  const svgH = MT + n * (BAR_H + BAR_GAP) - BAR_GAP + MB;
+
+  const maxVal = items[items.length - 1][1]; // 최댓값 (reversed라 마지막)
+  const scale  = v => (v / maxVal) * chartW;
+
+  // X축 눈금 (0, 25, 50, 75, 100%)
+  const ticks = [0, 0.25, 0.5, 0.75, 1.0];
+
+  // matplotlib 기본 파란색 계열 그라디언트
+  const COLORS = ['#1f77b4','#2e86c8','#3d95dc','#4ca4f0','#5ab4ff',
+                  '#1a6fa0','#156090','#105080','#0b4070','#063060'];
+
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}"
+    style="font-family:'Segoe UI',Arial,sans-serif;background:#fff;border:1px solid #e5e7eb;border-radius:8px;">
+
+  <!-- 제목 -->
+  <text x="${ML + chartW/2}" y="22" text-anchor="middle"
+    font-size="13" font-weight="700" fill="#111">Feature Importance (상위 ${n}개)</text>
+
+  <!-- 그리드 라인 + X축 눈금 -->`;
+
+  ticks.forEach(t => {
+    const x = ML + scale(t * maxVal);
+    svg += `
+  <line x1="${x}" y1="${MT - 6}" x2="${x}" y2="${MT + n*(BAR_H+BAR_GAP) - BAR_GAP}"
+    stroke="${t===0?'#555':'#e0e0e0'}" stroke-width="${t===0?1.2:1}" stroke-dasharray="${t===0?'none':'3,3'}"/>
+  <text x="${x}" y="${MT + n*(BAR_H+BAR_GAP) - BAR_GAP + 16}"
+    text-anchor="middle" font-size="10" fill="#666">${(t*100).toFixed(0)}%</text>`;
+  });
+
+  // 바 + 레이블
+  items.forEach(([name, val], i) => {
+    const y   = MT + i * (BAR_H + BAR_GAP);
+    const bw  = scale(val);
+    const pct = (val * 100).toFixed(1);
+    const col = COLORS[i % COLORS.length];
+    // 이름이 길면 말줄임
+    const dispName = name.length > 18 ? name.slice(0, 17) + '…' : name;
+    svg += `
+  <text x="${ML - 8}" y="${y + BAR_H*0.72}" text-anchor="end"
+    font-size="11.5" fill="#333" title="${escapeHtml(name)}">${escapeHtml(dispName)}</text>
+  <rect x="${ML}" y="${y}" width="${bw}" height="${BAR_H}"
+    fill="${col}" rx="3"/>
+  <text x="${ML + bw + 5}" y="${y + BAR_H*0.72}"
+    font-size="11" fill="#333" font-weight="600">${pct}%</text>`;
+  });
+
+  svg += `\n</svg>`;
+
+  const chart = document.getElementById('fiChart');
+  chart.innerHTML = svg + `
+    <div style="text-align:right;margin-top:8px;">
+      <button onclick="downloadFiChart()" style="font-size:11px;padding:5px 12px;
+        background:var(--surface2);border:1px solid var(--border);border-radius:6px;
+        cursor:pointer;color:var(--text);">⬇ 이미지 저장</button>
+    </div>`;
+}
+
+function downloadFiChart() {
+  const svgEl = document.querySelector('#fiChart svg');
+  if (!svgEl) return;
+  const blob = new Blob([svgEl.outerHTML], { type: 'image/svg+xml' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = 'feature_importance.svg';
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ── 파라미터 자동 튜닝 ───────────────────────────────────────
@@ -1166,13 +1245,14 @@ async function autoTuneParams() {
 
   const overlay = document.getElementById('tuneOverlay');
 
-  // 라이티 캐릭터 삽입 (없으면)
-  if (!overlay.querySelector('.laity-float')) {
+  // 라이티 캐릭터 삽입 (없으면) — tune-ov-char 안에 넣어야 박스와 함께 중앙 정렬됨
+  const charDiv = overlay.querySelector('.tune-ov-char');
+  if (charDiv && !charDiv.querySelector('.laity-float')) {
     const laityImg = document.createElement('img');
     laityImg.src       = '/static/laity.png';
     laityImg.alt       = 'Laity';
     laityImg.className = 'laity-float';
-    overlay.insertBefore(laityImg, overlay.firstChild);
+    charDiv.insertBefore(laityImg, charDiv.firstChild);
   }
 
   overlay.classList.add('show');

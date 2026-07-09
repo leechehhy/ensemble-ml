@@ -1,4 +1,4 @@
-import os, pickle, uuid, threading, io, json, time
+import os, sys, pickle, uuid, threading, io, json, time, webbrowser
 import tempfile
 from flask import Flask, request, jsonify, render_template, Response
 
@@ -13,7 +13,12 @@ from sklearn.metrics import (accuracy_score, precision_score, recall_score,
 from sklearn.preprocessing import LabelEncoder
 from collections import Counter
 
-app = Flask(__name__, template_folder='templates', static_folder='static')
+# exe로 패키징된 경우 리소스 경로를 _MEIPASS(압축 해제 임시폴더)로 재지정
+BASE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+
+app = Flask(__name__,
+            template_folder=os.path.join(BASE_DIR, 'templates'),
+            static_folder=os.path.join(BASE_DIR, 'static'))
 
 # 병렬 작업 수: 저사양 배포 환경(Render 등)에서는 1로 제한해 메모리 초과 방지
 # 필요 시 환경변수 N_JOBS로 재정의 가능
@@ -758,4 +763,7 @@ def api_predict():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
+    # 로컬 실행 시 1.5초 후 브라우저 자동 오픈 (Render 등 서버 환경 제외)
+    if not os.environ.get('RENDER'):
+        threading.Timer(1.5, lambda: webbrowser.open(f'http://localhost:{port}')).start()
     app.run(host='0.0.0.0', port=port, debug=False)
